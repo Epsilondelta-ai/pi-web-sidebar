@@ -5,6 +5,7 @@ const ICONS = {
   plus: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>',
   refresh: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>',
   collapse: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>',
+  grip: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>',
 };
 
 export default function activate(context) {
@@ -18,6 +19,7 @@ export function createSidebarController(app) {
   let nativeSidebar = null;
   let nativePlaceholder = null;
   let originalRenderSidebarWorkspaces = null;
+  let draggedItem = null;
 
   function mount() {
     const body = app.querySelector(".app-body");
@@ -42,6 +44,7 @@ export function createSidebarController(app) {
 
     app.dataset.sidebar = app.dataset.sidebar || "open";
     bindResizer(wrap, app);
+    bindFallbackDrag(wrap, app);
     installSortableRenderBridge();
     renderExistingWorkspaces();
     app.restoreSidebar?.();
@@ -77,6 +80,7 @@ export function createSidebarController(app) {
     originalRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
     app.renderSidebarWorkspaces = function renderPiWebSidebarWorkspaces(workspaces) {
       const result = originalRenderSidebarWorkspaces.call(this, workspaces);
+      ensureFallbackDragHandles();
       activateSortableSidebar(workspaces);
       return result;
     };
@@ -99,7 +103,119 @@ export function createSidebarController(app) {
     void Promise.resolve().then(() => app.renderSortableSidebarWorkspaces(section, workspaces));
   }
 
+  function ensureFallbackDragHandles() {
+    ensureWorkspaceDragHandles(wrap);
+    ensureSessionDragHandles(wrap);
+  }
+
+  function startDrag(item) {
+    draggedItem = item;
+  }
+
+  function finishDrag(target) {
+    if (!draggedItem || !target) {
+      draggedItem = null;
+      return;
+    }
+
+    if (draggedItem.type === "workspace") {
+      moveWorkspaceBefore(draggedItem.element, target.closest(".workspace-group"));
+    }
+
+    if (draggedItem.type === "session") {
+      moveSessionBefore(draggedItem.element, target.closest(".session-row[data-session]"));
+    }
+
+    draggedItem = null;
+  }
+
+  function moveWorkspaceBefore(source, target) {
+    if (!source || !target || source === target) {
+      return;
+    }
+
+    target.parentElement.insertBefore(source, target);
+    const ids = [...wrap.querySelectorAll(".workspace-group[data-workspace-group]")].map((group) => group.dataset.workspaceGroup);
+    app.reorderWorkspaces?.(ids);
+  }
+
+  function moveSessionBefore(source, target) {
+    if (!source || !target || source === target || source.dataset.workspace !== target.dataset.workspace) {
+      return;
+    }
+
+    target.parentElement.insertBefore(source, target);
+    const workspaceId = source.dataset.workspace;
+    const ids = [...target.parentElement.querySelectorAll(".session-row[data-session]")].map((row) => row.dataset.session);
+    app.reorderWorkspaceSessions?.(workspaceId, ids);
+  }
+
+  function bindFallbackDrag(panel, host) {
+    if (panel.dataset.piWebSidebarFallbackDragBound === "true") {
+      return;
+    }
+
+    panel.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest("[data-pi-web-sidebar-drag-handle]");
+      if (!handle) {
+        return;
+      }
+
+      const workspace = handle.closest(".workspace-group");
+      const session = handle.closest(".session-row[data-session]");
+      startDrag(session ? { type: "session", element: session } : { type: "workspace", element: workspace });
+      event.dataTransfer?.setData("text/plain", "pi-web-sidebar-drag");
+      event.dataTransfer?.setDragImage?.(handle, 6, 6);
+    });
+    panel.addEventListener("dragover", (event) => {
+      if (draggedItem && event.target.closest(".workspace-group, .session-row[data-session]")) {
+        event.preventDefault();
+      }
+    });
+    panel.addEventListener("drop", (event) => {
+      event.preventDefault();
+      finishDrag(event.target);
+      host.renderWorkspaces?.(host.workspaceList || []);
+    });
+    panel.addEventListener("dragend", () => {
+      draggedItem = null;
+    });
+    panel.dataset.piWebSidebarFallbackDragBound = "true";
+  }
+
   return { mount, dispose, get element() { return wrap; } };
+}
+
+function ensureWorkspaceDragHandles(root) {
+  root?.querySelectorAll(".workspace-group .ws-row").forEach((row) => {
+    if (row.querySelector(".workspace-drag-handle")) {
+      return;
+    }
+
+    const handle = document.createElement("span");
+    handle.className = "drag-handle workspace-drag-handle";
+    handle.setAttribute("aria-label", "reorder workspace");
+    handle.setAttribute("draggable", "true");
+    handle.setAttribute("data-pi-web-sidebar-drag-handle", "workspace");
+    handle.innerHTML = ICONS.grip;
+    row.insertBefore(handle, row.firstChild);
+  });
+}
+
+function ensureSessionDragHandles(root) {
+  root?.querySelectorAll(".session-row[data-session] .session-main").forEach((row) => {
+    if (row.querySelector(".session-drag-handle")) {
+      return;
+    }
+
+    const handle = document.createElement("span");
+    handle.className = "drag-handle session-drag-handle";
+    handle.setAttribute("aria-label", "reorder session");
+    handle.setAttribute("draggable", "true");
+    handle.setAttribute("data-pi-web-sidebar-drag-handle", "session");
+    handle.innerHTML = ICONS.grip;
+    row.insertBefore(handle, row.firstChild);
+  });
 }
 
 function resetHostSidebarRenderState(app) {

@@ -135,6 +135,27 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.renderSortableSidebarWorkspacesCalls[0].workspaces).toBe(nextWorkspaces);
   });
 
+  test("adds fallback grip handles to static host rows", async () => {
+    const app = setupApp();
+    app.renderSidebarWorkspaces = (workspaces) => {
+      app.renderSidebarWorkspacesCalls.push(workspaces);
+      const section = app.querySelector("[data-pi-web-sidebar-plugin] .sb-section");
+      section.insertAdjacentHTML("beforeend", `
+        <div class="workspace-group" data-workspace-group="w1">
+          <div class="workspace-shell"><button class="ws-row" type="button"><span class="label">one</span></button></div>
+          <div class="sessions"><div class="session-row" data-session="s1" data-workspace="w1"><button class="session-main" type="button"><span class="title">one</span></button></div></div>
+        </div>`);
+    };
+    app.baseRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    await Promise.resolve();
+
+    expect(app.querySelector(".workspace-drag-handle")?.getAttribute("draggable")).toBe("true");
+    expect(app.querySelector(".session-drag-handle")?.getAttribute("draggable")).toBe("true");
+  });
+
   test("plugin resizer delegates to host startResize", () => {
     const app = setupApp();
     const controller = createSidebarController(app);
