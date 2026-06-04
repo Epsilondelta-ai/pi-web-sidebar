@@ -114,14 +114,33 @@ export function createSidebarController(app) {
     draggedItem = item;
     wrap.classList.add("pi-web-sidebar-dragging", `pi-web-sidebar-dragging-${item.type}`);
     item.element?.classList.add("pi-web-sidebar-drag-source");
+
+    if (item.type === "workspace") {
+      collapseAllSessionsForWorkspaceDrag();
+    }
   }
 
   function clearDragState() {
+    restoreSessionsAfterWorkspaceDrag();
     wrap?.classList.remove("pi-web-sidebar-dragging", "pi-web-sidebar-dragging-workspace", "pi-web-sidebar-dragging-session");
     wrap?.querySelectorAll(".pi-web-sidebar-drag-source, .pi-web-sidebar-drop-target").forEach((node) => {
       node.classList.remove("pi-web-sidebar-drag-source", "pi-web-sidebar-drop-target");
     });
     draggedItem = null;
+  }
+
+  function collapseAllSessionsForWorkspaceDrag() {
+    wrap.querySelectorAll(".workspace-group > .sessions").forEach((sessions) => {
+      sessions.dataset.piWebSidebarWasHidden = sessions.hidden ? "true" : "false";
+      sessions.hidden = true;
+    });
+  }
+
+  function restoreSessionsAfterWorkspaceDrag() {
+    wrap?.querySelectorAll(".workspace-group > .sessions[data-pi-web-sidebar-was-hidden]").forEach((sessions) => {
+      sessions.hidden = sessions.dataset.piWebSidebarWasHidden === "true";
+      delete sessions.dataset.piWebSidebarWasHidden;
+    });
   }
 
   function previewDrag(target, event) {

@@ -198,11 +198,13 @@ describe("pi-web-sidebar plugin", () => {
     workspaceTarget.getBoundingClientRect = () => ({ top: 0, height: 10 });
     workspaceHandle.dispatchEvent(dragEvent("dragstart"));
     expect(app.querySelector("[data-pi-web-sidebar-plugin]").classList.contains("pi-web-sidebar-dragging-workspace")).toBe(true);
+    expect([...app.querySelectorAll(".workspace-group > .sessions")].every((sessions) => sessions.hidden)).toBe(true);
     workspaceTarget.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
     app.querySelector("[data-pi-web-sidebar-plugin]").dispatchEvent(dragEvent("drop"));
 
     expect([...app.querySelectorAll(".workspace-group")].map((group) => group.dataset.workspaceGroup)).toEqual(["w2", "w1"]);
     expect(app.reorderWorkspacesCalls.at(-1)).toEqual(["w2", "w1"]);
+    expect([...app.querySelectorAll(".workspace-group > .sessions")].some((sessions) => sessions.hidden)).toBe(false);
 
     const sessionHandle = app.querySelector("[data-session='s1'] .session-drag-handle");
     const sessionTarget = app.querySelector("[data-session='s2']");
