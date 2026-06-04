@@ -1,11 +1,12 @@
 {
   "name": "pi-web-sidebar",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "private": true,
   "scripts": {
     "test": "bun test",
     "validate": "bun ./scripts/validate.js",
+    "build:backend": "./scripts/build-backends.sh",
     "check": "bun test && bun run validate"
   },
   "devDependencies": {

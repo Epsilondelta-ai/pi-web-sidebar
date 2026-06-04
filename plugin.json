@@ -1,6 +1,7 @@
 {
   "id": "pi-web-sidebar",
   "name": "Workspace Sidebar",
-  "version": "0.1.5",
-  "entry": "index.js"
+  "version": "0.1.6",
+  "entry": "index.js",
+  "backend": "backend.js"
 }

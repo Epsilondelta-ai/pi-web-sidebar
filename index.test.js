@@ -9,6 +9,7 @@ afterEach(() => {
   windowRef = undefined;
   delete globalThis.window;
   delete globalThis.document;
+  delete globalThis.prompt;
 });
 
 function setupApp() {
@@ -38,6 +39,10 @@ function setupApp() {
   app.applyGrid = () => app.applyGridCalls += 1;
   app.startResizeCalls = 0;
   app.startResize = () => app.startResizeCalls += 1;
+  app.routeCalls = [];
+  app.route = (route) => app.routeCalls.push(route);
+  app.openWorkspacePathCalls = [];
+  app.openWorkspacePath = async (path) => app.openWorkspacePathCalls.push(path);
   app.reorderWorkspacesCalls = [];
   app.reorderWorkspaces = (ids) => app.reorderWorkspacesCalls.push(ids);
   app.reorderWorkspaceSessionsCalls = [];
@@ -70,6 +75,8 @@ describe("pi-web-sidebar plugin", () => {
     const pluginSidebar = body.firstElementChild;
     expect(pluginSidebar.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
     expect(pluginSidebar.querySelector("[data-action='refresh-workspaces']")).toBeTruthy();
+    expect(pluginSidebar.querySelector("[data-pi-web-sidebar-action='open-workspace']")).toBeTruthy();
+    expect(pluginSidebar.querySelector("[data-action='route-picker']")).toBeFalsy();
     expect(pluginSidebar.querySelector(".sb-footer")).toBeFalsy();
     expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeFalsy();
     expect(app.querySelector("[data-native-sidebar]")).toBeFalsy();
@@ -92,6 +99,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
+    expect(app.querySelector("[data-pi-web-sidebar-picker]")).toBeFalsy();
     expect(app.querySelector("[data-native-sidebar]")).toBeTruthy();
     expect(app.renderSidebarWorkspaces).toBe(app.baseRenderSidebarWorkspaces);
     expect(app.applyGridCalls).toBe(1);
@@ -168,6 +176,9 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector(".workspace-drag-handle")?.getAttribute("draggable")).toBe("true");
     expect(app.querySelector(".session-drag-handle")?.getAttribute("draggable")).toBe("true");
+    const sidebarStyle = document.getElementById("pi-web-sidebar-fallback-drag-style")?.textContent;
+    expect(sidebarStyle).toContain(".session-row[data-session]");
+    expect(sidebarStyle).toContain("padding-left: 12px");
   });
 
   test("fallback drag previews workspace and session moves before drop", async () => {
@@ -227,6 +238,128 @@ describe("pi-web-sidebar plugin", () => {
 
     expect([...app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")].map((row) => row.dataset.session)).toEqual(["s2", "s1"]);
     expect(app.reorderWorkspaceSessionsCalls.at(-1)).toEqual({ workspaceId: "w1", ids: ["s2", "s1"] });
+  });
+
+  test("plugin open button uses backend folder browser and opens selected workspace path", async () => {
+    const app = setupApp();
+    const context = { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls.push({ method, options });
+      return { path: "/picked", displayPath: "/picked", parent: "/", folders: [{ name: "workspace", path: "/picked/workspace" }] };
+    } };
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(context.backendCalls).toEqual([{ method: "list-folders", options: { data: { path: "~" } } }]);
+    expect(app.querySelector("[data-pi-web-sidebar-picker]").hidden).toBe(false);
+    expect(app.querySelector("[data-picker-action='up']")).toBeFalsy();
+    const rows = [...app.querySelectorAll(".pi-sidebar-picker-row")];
+    expect(rows[0].textContent).toContain("..");
+    expect(rows[1].textContent).toContain("workspace");
+
+    app.querySelector("[data-picker-action='open-current']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    expect(app.openWorkspacePathCalls).toEqual(["/picked"]);
+    expect(app.routeCalls).toEqual([]);
+  });
+
+  test("plugin folder browser creates a new folder through backend modal and refreshes", async () => {
+    const app = setupApp();
+    let folders = [];
+    const context = { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls.push({ method, options });
+      if (method === "create-folder") {
+        folders = [{ name: "new-dir", path: "/home/me/new-dir" }];
+        return { name: "new-dir", path: "/home/me/new-dir" };
+      }
+      return { path: "/home/me", parent: "/home", folders };
+    } };
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    app.querySelector("[data-picker-action='new-folder']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(app.querySelector("[data-new-folder-dialog]").hidden).toBe(false);
+    app.querySelector("[data-new-folder-form] input[name='name']").value = "new-dir";
+    app.querySelector("[data-new-folder-form]").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-new-folder-dialog]").hidden).toBe(true);
+    expect(context.backendCalls.at(-2)).toEqual({ method: "create-folder", options: { data: { parent: "/home/me", name: "new-dir" } } });
+    expect(context.backendCalls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me" } } });
+    expect(app.querySelector(".pi-sidebar-picker-row[data-path='/home/me/new-dir']").textContent).toContain("new-dir");
+  });
+
+  test("plugin folder browser clones a git repository through backend modal and enters clone", async () => {
+    const app = setupApp();
+    const context = { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls.push({ method, options });
+      if (method === "clone-workspace") return { name: "repo", path: "/home/me/repo" };
+      if (options.data.path === "/home/me/repo") return { path: "/home/me/repo", parent: "/home/me", folders: [] };
+      return { path: "/home/me", parent: "/home", folders: [{ name: "repo", path: "/home/me/repo" }] };
+    } };
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    app.querySelector("[data-picker-action='clone']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(app.querySelector("[data-clone-dialog]").hidden).toBe(false);
+    app.querySelector("[data-clone-form] input[name='gitUrl']").value = "https://example.com/repo.git";
+    app.querySelector("[data-clone-form] input[name='name']").value = "repo";
+    app.querySelector("[data-clone-form]").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-clone-dialog]").hidden).toBe(true);
+    expect(context.backendCalls.at(-3)).toEqual({ method: "clone-workspace", options: { data: { parent: "/home/me", gitUrl: "https://example.com/repo.git", name: "repo" } } });
+    expect(context.backendCalls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/repo" } } });
+    expect(app.querySelector("[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/repo");
+  });
+
+  test("plugin folder browser enters child folders through backend", async () => {
+    const app = setupApp();
+    const responses = {
+      "~": { path: "/home/me", parent: "/home", folders: [{ name: "code", path: "/home/me/code" }] },
+      "/home/me/code": { path: "/home/me/code", parent: "/home/me", folders: [] },
+    };
+    const context = { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls.push({ method, options });
+      return responses[options.data.path];
+    } };
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    app.querySelector(".pi-sidebar-picker-row[data-path='/home/me/code']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    expect(context.backendCalls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/code" } } });
+    expect(app.querySelector("[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/code");
+    expect(app.querySelector(".pi-sidebar-picker-empty")).toBeFalsy();
+  });
+
+  test("plugin open button falls back to picker route when backend is unavailable", async () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    expect(app.routeCalls).toEqual(["picker"]);
   });
 
   test("plugin resizer delegates to host startResize", () => {

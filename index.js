@@ -10,12 +10,12 @@ const ICONS = {
 };
 
 export default function activate(context) {
-  const controller = createSidebarController(context.app);
+  const controller = createSidebarController(context.app, context);
   controller.mount();
   return () => controller.dispose();
 }
 
-export function createSidebarController(app) {
+export function createSidebarController(app, context = {}) {
   let wrap = null;
   let nativeSidebar = null;
   let nativePlaceholder = null;
@@ -46,6 +46,7 @@ export function createSidebarController(app) {
     installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
     bindResizer(wrap, app);
+    bindOpenWorkspace(wrap, app, context);
     bindFallbackDrag(wrap, app);
     installSortableRenderBridge();
     renderExistingWorkspaces();
@@ -54,6 +55,7 @@ export function createSidebarController(app) {
 
   function dispose() {
     resetHostSidebarRenderState(app);
+    app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
     wrap?.remove();
 
     if (nativePlaceholder?.isConnected && nativeSidebar) {
@@ -320,6 +322,9 @@ function installFallbackDragStyles() {
     [data-pi-web-sidebar-plugin] .session-row[data-session] {
       transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
     }
+    [data-pi-web-sidebar-plugin] .workspace-group > .sessions .session-row[data-session] {
+      padding-left: 12px;
+    }
     [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
       display: none !important;
     }
@@ -396,6 +401,239 @@ function bindResizer(wrap, app) {
   resizer.dataset.piWebSidebarResizeBound = "true";
 }
 
+function bindOpenWorkspace(wrap, app, context) {
+  if (wrap.dataset.piWebSidebarOpenBound === "true") {
+    return;
+  }
+
+  wrap.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-pi-web-sidebar-action='open-workspace']");
+    if (!button || !wrap.contains(button)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    await openWorkspaceWithBackend(button, app, context);
+  });
+  wrap.dataset.piWebSidebarOpenBound = "true";
+}
+
+async function openWorkspaceWithBackend(button, app, context) {
+  if (typeof context.backend !== "function") {
+    app.route?.("picker");
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const picker = ensureWorkspacePicker(app, context);
+    picker.hidden = false;
+    await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
+  } catch (error) {
+    showWorkspacePickerError(app, error);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function ensureWorkspacePicker(app, context) {
+  let picker = app.querySelector("[data-pi-web-sidebar-picker]");
+  if (picker) {
+    return picker;
+  }
+
+  picker = document.createElement("div");
+  picker.dataset.piWebSidebarPicker = "";
+  picker.hidden = true;
+  picker.innerHTML = [
+    "<style>",
+    "[data-pi-web-sidebar-picker][hidden]{display:none}",
+    "[data-pi-web-sidebar-picker]{position:fixed;inset:0;z-index:120;display:grid;place-items:center;background:rgba(0,0,0,.45)}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-dialog{width:min(720px,calc(100vw - 32px));height:min(640px,calc(100vh - 32px));display:grid;grid-template-rows:auto auto 1fr auto;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-2,14px);box-shadow:0 24px 80px rgba(0,0,0,.5);overflow:hidden}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-head,[data-pi-web-sidebar-picker] .pi-sidebar-picker-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;border-bottom:1px solid var(--border-dim,var(--border))}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-actions{border-top:1px solid var(--border-dim,var(--border));border-bottom:0}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-path{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-dim,var(--border))}",
+    "[data-pi-web-sidebar-picker] input{flex:1;min-width:0;border:1px solid var(--border);border-radius:9px;background:var(--bg-1);color:var(--fg-0);font:12px/1 var(--font-mono);padding:8px 10px}",
+    "[data-pi-web-sidebar-picker] button{border:1px solid var(--border);border-radius:9px;background:var(--bg-1);color:var(--fg-1);font:12px/1 var(--font-mono);padding:8px 10px;cursor:pointer}",
+    "[data-pi-web-sidebar-picker] button:hover{border-color:var(--accent);color:var(--accent)}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-list{overflow:auto;padding:6px}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-row{width:100%;display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;text-align:left;background:transparent;border:0;border-radius:8px;padding:9px 10px}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-row:hover{background:var(--bg-3)}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-row small{color:var(--fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-picker-error{color:var(--danger,#f87171);font-size:12px;min-height:1em}",
+    "[data-pi-web-sidebar-picker] [data-clone-dialog][hidden],[data-pi-web-sidebar-picker] [data-new-folder-dialog][hidden]{display:none}",
+    "[data-pi-web-sidebar-picker] [data-clone-dialog],[data-pi-web-sidebar-picker] [data-new-folder-dialog]{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.42)}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-form-dialog{width:min(460px,calc(100vw - 48px));display:grid;gap:10px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-2,14px);box-shadow:0 20px 60px rgba(0,0,0,.5);padding:14px}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-form-dialog label{display:grid;gap:6px;color:var(--fg-2);font:12px/1 var(--font-mono)}",
+    "[data-pi-web-sidebar-picker] .pi-sidebar-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}",
+    "</style>",
+
+    '<section class="pi-sidebar-picker-dialog" role="dialog" aria-modal="true" aria-label="open workspace">',
+    '<div class="pi-sidebar-picker-head"><strong>open workspace</strong><button type="button" data-picker-action="close">close</button></div>',
+    '<form class="pi-sidebar-picker-path" data-picker-path-form><input name="path" autocomplete="off" spellcheck="false"><button type="submit">go</button></form>',
+    '<div class="pi-sidebar-picker-list" data-picker-list></div>',
+    '<div class="pi-sidebar-picker-actions"><span class="pi-sidebar-picker-error" data-picker-error></span><span><button type="button" data-picker-action="new-folder">new folder</button> <button type="button" data-picker-action="clone">clone</button> <button type="button" data-picker-action="refresh">refresh</button> <button type="button" data-picker-action="open-current">open current</button></span></div>',
+    "</section>",
+    '<div data-new-folder-dialog hidden><form class="pi-sidebar-form-dialog" data-new-folder-form><strong>new folder</strong><label>folder name<input name="name" autocomplete="off" spellcheck="false" required></label><div class="pi-sidebar-form-actions"><button type="button" data-picker-action="new-folder-cancel">cancel</button><button type="submit">create</button></div></form></div>',
+    '<div data-clone-dialog hidden><form class="pi-sidebar-form-dialog" data-clone-form><strong>clone repository</strong><label>git url<input name="gitUrl" autocomplete="off" spellcheck="false" placeholder="https://github.com/user/repo.git" required></label><label>folder name <input name="name" autocomplete="off" spellcheck="false" placeholder="optional"></label><div class="pi-sidebar-form-actions"><button type="button" data-picker-action="clone-cancel">cancel</button><button type="submit">clone</button></div></form></div>',
+  ].join("");
+  app.append(picker);
+
+  picker.addEventListener("click", async (event) => {
+    const action = event.target.closest("[data-picker-action]")?.dataset.pickerAction;
+    if (!action) return;
+    event.preventDefault();
+    try {
+      if (action === "close") picker.hidden = true;
+      if (action === "refresh") await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
+      if (action === "enter") await loadWorkspacePickerPath(picker, context, event.target.closest("[data-path]")?.dataset.path || "~");
+      if (action === "new-folder") showNewFolderDialog(picker);
+      if (action === "new-folder-cancel") hideNewFolderDialog(picker);
+      if (action === "clone") showCloneWorkspaceDialog(picker);
+      if (action === "clone-cancel") hideCloneWorkspaceDialog(picker);
+      if (action === "open-current") await openPickedWorkspace(app, picker.dataset.currentPath || "");
+    } catch (error) {
+      showWorkspacePickerError(app, error);
+    }
+  });
+  picker.querySelector("[data-picker-path-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await loadWorkspacePickerPath(picker, context, event.currentTarget.elements.path.value.trim() || "~");
+    } catch (error) {
+      showWorkspacePickerError(app, error);
+    }
+  });
+  picker.querySelector("[data-new-folder-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await createWorkspacePickerFolder(picker, context, event.currentTarget.elements.name.value.trim());
+  });
+  picker.querySelector("[data-clone-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    await cloneWorkspaceIntoPickerFolder(picker, context, form.elements.gitUrl.value.trim(), form.elements.name.value.trim());
+  });
+  return picker;
+}
+
+async function loadWorkspacePickerPath(picker, context, path) {
+  const input = picker.querySelector('input[name="path"]');
+  const list = picker.querySelector("[data-picker-list]");
+  const error = picker.querySelector("[data-picker-error]");
+  error.textContent = "";
+  list.textContent = "loading…";
+  try {
+    const listing = await context.backend("list-folders", { data: { path } });
+    picker.dataset.currentPath = listing.path || path;
+    picker.dataset.parentPath = listing.parent || listing.path || path;
+    input.value = listing.displayPath || listing.path || path;
+    renderWorkspacePickerRows(picker, listing.folders || [], picker.dataset.parentPath);
+  } catch (err) {
+    list.textContent = "";
+    error.textContent = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function showNewFolderDialog(picker) {
+  const dialog = picker.querySelector("[data-new-folder-dialog]");
+  const form = picker.querySelector("[data-new-folder-form]");
+  form.reset();
+  dialog.hidden = false;
+  form.elements.name.focus();
+}
+
+function hideNewFolderDialog(picker) {
+  picker.querySelector("[data-new-folder-dialog]").hidden = true;
+}
+
+async function createWorkspacePickerFolder(picker, context, name) {
+  if (!name) return;
+  const error = picker.querySelector("[data-picker-error]");
+  error.textContent = "";
+  try {
+    await context.backend("create-folder", { data: { parent: picker.dataset.currentPath || "~", name } });
+    hideNewFolderDialog(picker);
+    await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
+  } catch (err) {
+    error.textContent = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function showCloneWorkspaceDialog(picker) {
+  const dialog = picker.querySelector("[data-clone-dialog]");
+  const form = picker.querySelector("[data-clone-form]");
+  form.reset();
+  dialog.hidden = false;
+  form.elements.gitUrl.focus();
+}
+
+function hideCloneWorkspaceDialog(picker) {
+  picker.querySelector("[data-clone-dialog]").hidden = true;
+}
+
+async function cloneWorkspaceIntoPickerFolder(picker, context, gitUrl, name = "") {
+  if (!gitUrl) return;
+  const error = picker.querySelector("[data-picker-error]");
+  error.textContent = "cloning…";
+  try {
+    const result = await context.backend("clone-workspace", { data: { parent: picker.dataset.currentPath || "~", gitUrl, name } });
+    hideCloneWorkspaceDialog(picker);
+    await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
+    if (result?.path) {
+      await loadWorkspacePickerPath(picker, context, result.path);
+    }
+  } catch (err) {
+    error.textContent = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function renderWorkspacePickerRows(picker, folders, parentPath) {
+  const list = picker.querySelector("[data-picker-list]");
+  list.replaceChildren();
+  if (parentPath) {
+    list.append(createWorkspacePickerRow({ name: "..", path: parentPath, displayPath: parentPath }, "↑"));
+  }
+  if (!folders.length) {
+    return;
+  }
+  for (const folder of folders) {
+    list.append(createWorkspacePickerRow(folder, "▸"));
+  }
+}
+
+function createWorkspacePickerRow(folder, icon) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "pi-sidebar-picker-row";
+  row.dataset.pickerAction = "enter";
+  row.dataset.path = folder.path;
+  row.innerHTML = "<span></span><span></span><small></small>";
+  row.children[0].textContent = icon;
+  row.children[1].textContent = folder.name || folder.path;
+  row.children[2].textContent = folder.displayPath || folder.path;
+  return row;
+}
+
+async function openPickedWorkspace(app, path) {
+  if (!path) return;
+  if (typeof app.openWorkspacePath === "function") {
+    await app.openWorkspacePath(path);
+  } else {
+    app.route?.("workspace");
+  }
+  app.querySelector("[data-pi-web-sidebar-picker]")?.setAttribute("hidden", "");
+}
+
+function showWorkspacePickerError(app, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error("Failed to open workspace", error);
+  const picker = app.querySelector("[data-pi-web-sidebar-picker]");
+  const target = picker?.querySelector("[data-picker-error]");
+  if (target) target.textContent = message;
+  else alert(`Failed to open workspace: ${message}`);
+}
+
 function findNativeSidebar(body, pluginWrap) {
   const sidebars = [...body.querySelectorAll(".sidebar-wrap")];
   return sidebars.find((candidate) => candidate !== pluginWrap && !candidate.hasAttribute(PLUGIN_PANEL_ATTR));
@@ -409,7 +647,7 @@ function createSidebar() {
     '<aside class="sidebar" aria-label="workspaces and sessions">',
     '<div class="sb-section" style="flex:1;overflow-y:auto;min-height:0">',
     '<div class="sb-head"><span>workspaces</span><span class="sb-head-actions">',
-    `<button class="add" type="button" data-action="route-picker">${ICONS.plus} open</button>`,
+    `<button class="add" type="button" data-pi-web-sidebar-action="open-workspace">${ICONS.plus} open</button>`,
     `<button class="refresh" type="button" data-action="refresh-workspaces" title="refresh workspaces" aria-label="refresh workspaces">${ICONS.refresh}</button>`,
     `<button class="sb-collapse" type="button" data-action="collapse-sidebar" title="collapse sidebar" aria-label="collapse sidebar">${ICONS.collapse}</button>`,
     '</span></div>',
