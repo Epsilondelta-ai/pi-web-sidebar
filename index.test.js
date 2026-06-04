@@ -1,0 +1,131 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { Window } from "happy-dom";
+import { createSidebarController } from "./index.js";
+
+let windowRef;
+
+afterEach(() => {
+  windowRef?.happyDOM?.close();
+  windowRef = undefined;
+  delete globalThis.window;
+  delete globalThis.document;
+});
+
+function setupApp() {
+  windowRef = new Window();
+  windowRef.SyntaxError = SyntaxError;
+  globalThis.window = windowRef;
+  globalThis.document = windowRef.document;
+  document.body.innerHTML = `
+    <pi-app data-sidebar="open">
+      <section class="app-body">
+        <div class="sidebar-wrap" data-native-sidebar><aside class="sidebar"><div class="sb-section"><div class="sb-head"></div></div></aside></div>
+        <main class="main"></main>
+      </section>
+    </pi-app>`;
+  const app = document.querySelector("pi-app");
+  app.workspaceList = [{ id: "w1", name: "one", sessions: [] }];
+  app.renderSidebarWorkspacesCalls = [];
+  app.renderSidebarWorkspaces = (workspaces) => app.renderSidebarWorkspacesCalls.push(workspaces);
+  app.restoreSidebarCalls = 0;
+  app.restoreSidebar = () => app.restoreSidebarCalls += 1;
+  app.applyGridCalls = 0;
+  app.applyGrid = () => app.applyGridCalls += 1;
+  app.startResizeCalls = 0;
+  app.startResize = () => app.startResizeCalls += 1;
+  app.sidebarSortableCleanupCalls = 0;
+  app.sidebarSortableCleanup = () => app.sidebarSortableCleanupCalls += 1;
+  app.sidebarSortableRoot = { unmount: () => app.sidebarSortableUnmounted = true };
+  app.sidebarSortableRenderToken = Symbol("old-render");
+  return app;
+}
+
+describe("pi-web-sidebar plugin", () => {
+  test("mounts plugin sidebar directly under app body and detaches native sidebar", () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+
+    const body = app.querySelector(".app-body");
+    const pluginSidebar = body.firstElementChild;
+    expect(pluginSidebar.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+    expect(pluginSidebar.querySelector("[data-action='refresh-workspaces']")).toBeTruthy();
+    expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeTruthy();
+    expect(app.querySelector("[data-native-sidebar]")).toBeFalsy();
+    expect(app.renderSidebarWorkspacesCalls).toEqual([[{ id: "w1", name: "one", sessions: [] }]]);
+    expect(app.restoreSidebarCalls).toBe(1);
+    expect(app.sidebarSortableCleanupCalls).toBe(1);
+    expect(app.sidebarSortableUnmounted).toBe(true);
+    expect(app.sidebarSortableRoot).toBeUndefined();
+    expect(app.sidebarSortableRenderToken).toBeUndefined();
+  });
+
+  test("dispose removes plugin sidebar and restores native sidebar", () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    controller.dispose();
+
+    expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
+    expect(app.querySelector("[data-native-sidebar]")).toBeTruthy();
+    expect(app.applyGridCalls).toBe(1);
+    expect(app.sidebarSortableRoot).toBeUndefined();
+    expect(app.sidebarSortableRenderToken).toBeUndefined();
+  });
+
+  test("dispose restores native sidebar hidden when host state is collapsed", () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    app.dataset.sidebar = "collapsed";
+    controller.dispose();
+
+    expect(app.querySelector("[data-native-sidebar]").hidden).toBe(true);
+  });
+
+  test("mounts without a native sidebar", () => {
+    const app = setupApp();
+    app.querySelector("[data-native-sidebar]").remove();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+
+    expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeTruthy();
+    expect(app.querySelector(".app-body").firstElementChild.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+  });
+
+  test("mount and dispose are idempotent", () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    controller.mount();
+    controller.dispose();
+
+    expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
+    expect(app.querySelectorAll("[data-native-sidebar]")).toHaveLength(1);
+  });
+
+  test("plugin resizer delegates to host startResize", () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    app.querySelector(".sb-resizer").dispatchEvent(new window.Event("pointerdown"));
+
+    expect(app.startResizeCalls).toBe(1);
+  });
+
+  test("throws when app body is missing", () => {
+    windowRef = new Window();
+    windowRef.SyntaxError = SyntaxError;
+    globalThis.window = windowRef;
+    globalThis.document = windowRef.document;
+    document.body.innerHTML = "<pi-app></pi-app>";
+
+    expect(() => createSidebarController(document.querySelector("pi-app")).mount()).toThrow(".app-body");
+  });
+});

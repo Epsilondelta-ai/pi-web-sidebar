@@ -1,0 +1,14 @@
+{
+  "name": "pi-web-sidebar",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "validate": "bun ./scripts/validate.js",
+    "check": "bun test && bun run validate"
+  },
+  "devDependencies": {
+    "happy-dom": "20.10.1"
+  }
+}
