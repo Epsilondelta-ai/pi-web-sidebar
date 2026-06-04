@@ -186,9 +186,12 @@ export function createSidebarController(app) {
       return false;
     }
 
+    const siblings = movableSiblings(source);
+    const before = measureTops(siblings);
     wrap.querySelectorAll(".pi-web-sidebar-drop-target").forEach((node) => node.classList.remove("pi-web-sidebar-drop-target"));
     target.parentElement.insertBefore(source, anchor);
     target.classList.add("pi-web-sidebar-drop-target");
+    animateMovedSiblings(siblings, before);
     return true;
   }
 
@@ -255,6 +258,54 @@ export function createSidebarController(app) {
   }
 
   return { mount, dispose, get element() { return wrap; } };
+}
+
+function movableSiblings(source) {
+  if (source.classList.contains("workspace-group")) {
+    return [...source.parentElement.querySelectorAll(".workspace-group[data-workspace-group]")];
+  }
+
+  return [...source.parentElement.querySelectorAll(".session-row[data-session]")];
+}
+
+function measureTops(elements) {
+  return new Map(elements.map((element) => [element, element.getBoundingClientRect?.().top || 0]));
+}
+
+function scheduleFrame(callback) {
+  const frame = globalThis.requestAnimationFrame || window?.requestAnimationFrame;
+  if (typeof frame === "function") {
+    frame(callback);
+    return;
+  }
+
+  setTimeout(callback, 0);
+}
+
+function animateMovedSiblings(elements, before) {
+  scheduleFrame(() => {
+    for (const element of elements) {
+      const oldTop = before.get(element) || 0;
+      const newTop = element.getBoundingClientRect?.().top || 0;
+      const delta = oldTop - newTop;
+      if (!delta) {
+        continue;
+      }
+
+      if (typeof element.animate === "function") {
+        element.animate([
+          { transform: `translateY(${delta}px)` },
+          { transform: "translateY(0)" },
+        ], { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" });
+      } else {
+        element.style.transform = `translateY(${delta}px)`;
+        element.style.transition = "transform 180ms cubic-bezier(0.2, 0, 0, 1)";
+        scheduleFrame(() => {
+          element.style.transform = "";
+        });
+      }
+    }
+  });
 }
 
 function installFallbackDragStyles() {

@@ -193,17 +193,29 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
     await Promise.resolve();
+    window.requestAnimationFrame = (callback) => {
+      callback();
+      return 1;
+    };
+    const animated = [];
+    app.querySelectorAll(".workspace-group").forEach((group) => {
+      group.animate = () => animated.push(group.dataset.workspaceGroup);
+      group.getBoundingClientRect = () => ({
+        top: [...app.querySelectorAll(".workspace-group")].indexOf(group) * 10,
+        height: 10,
+      });
+    });
     const workspaceHandle = app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle");
     const workspaceTarget = app.querySelector("[data-workspace-group='w2']");
-    workspaceTarget.getBoundingClientRect = () => ({ top: 0, height: 10 });
     workspaceHandle.dispatchEvent(dragEvent("dragstart"));
     expect(app.querySelector("[data-pi-web-sidebar-plugin]").classList.contains("pi-web-sidebar-dragging-workspace")).toBe(true);
     expect([...app.querySelectorAll(".workspace-group > .sessions")].every((sessions) => sessions.hidden)).toBe(true);
-    workspaceTarget.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
+    workspaceTarget.dispatchEvent(dragEvent("dragover", { clientY: 19 }));
     app.querySelector("[data-pi-web-sidebar-plugin]").dispatchEvent(dragEvent("drop"));
 
     expect([...app.querySelectorAll(".workspace-group")].map((group) => group.dataset.workspaceGroup)).toEqual(["w2", "w1"]);
     expect(app.reorderWorkspacesCalls.at(-1)).toEqual(["w2", "w1"]);
+    expect(animated).toContain("w1");
     expect([...app.querySelectorAll(".workspace-group > .sessions")].some((sessions) => sessions.hidden)).toBe(false);
 
     const sessionHandle = app.querySelector("[data-session='s1'] .session-drag-handle");
