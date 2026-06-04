@@ -27,6 +27,11 @@ function setupApp() {
   app.workspaceList = [{ id: "w1", name: "one", sessions: [] }];
   app.renderSidebarWorkspacesCalls = [];
   app.renderSidebarWorkspaces = (workspaces) => app.renderSidebarWorkspacesCalls.push(workspaces);
+  app.baseRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
+  app.renderSortableSidebarWorkspacesCalls = [];
+  app.renderSortableSidebarWorkspaces = (section, workspaces) => {
+    app.renderSortableSidebarWorkspacesCalls.push({ section, workspaces });
+  };
   app.restoreSidebarCalls = 0;
   app.restoreSidebar = () => app.restoreSidebarCalls += 1;
   app.applyGridCalls = 0;
@@ -41,7 +46,7 @@ function setupApp() {
 }
 
 describe("pi-web-sidebar plugin", () => {
-  test("mounts plugin sidebar directly under app body and detaches native sidebar", () => {
+  test("mounts plugin sidebar directly under app body and detaches native sidebar", async () => {
     const app = setupApp();
     const controller = createSidebarController(app);
 
@@ -51,7 +56,8 @@ describe("pi-web-sidebar plugin", () => {
     const pluginSidebar = body.firstElementChild;
     expect(pluginSidebar.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
     expect(pluginSidebar.querySelector("[data-action='refresh-workspaces']")).toBeTruthy();
-    expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeTruthy();
+    expect(pluginSidebar.querySelector(".sb-footer")).toBeFalsy();
+    expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeFalsy();
     expect(app.querySelector("[data-native-sidebar]")).toBeFalsy();
     expect(app.renderSidebarWorkspacesCalls).toEqual([[{ id: "w1", name: "one", sessions: [] }]]);
     expect(app.restoreSidebarCalls).toBe(1);
@@ -59,6 +65,9 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.sidebarSortableUnmounted).toBe(true);
     expect(app.sidebarSortableRoot).toBeUndefined();
     expect(app.sidebarSortableRenderToken).toBeUndefined();
+    await Promise.resolve();
+    expect(app.renderSortableSidebarWorkspacesCalls).toHaveLength(1);
+    expect(app.renderSortableSidebarWorkspacesCalls[0].section).toBe(pluginSidebar.querySelector(".sb-section"));
   });
 
   test("dispose removes plugin sidebar and restores native sidebar", () => {
@@ -70,6 +79,7 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
     expect(app.querySelector("[data-native-sidebar]")).toBeTruthy();
+    expect(app.renderSidebarWorkspaces).toBe(app.baseRenderSidebarWorkspaces);
     expect(app.applyGridCalls).toBe(1);
     expect(app.sidebarSortableRoot).toBeUndefined();
     expect(app.sidebarSortableRenderToken).toBeUndefined();
@@ -107,6 +117,22 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
     expect(app.querySelectorAll("[data-native-sidebar]")).toHaveLength(1);
+  });
+
+  test("sortable bridge reactivates drag after host workspace renders", async () => {
+    const app = setupApp();
+    const controller = createSidebarController(app);
+    const nextWorkspaces = [{ id: "w2", name: "two", sessions: [] }];
+
+    controller.mount();
+    await Promise.resolve();
+    app.renderSortableSidebarWorkspacesCalls = [];
+    app.renderSidebarWorkspaces(nextWorkspaces);
+    await Promise.resolve();
+
+    expect(app.renderSidebarWorkspacesCalls.at(-1)).toBe(nextWorkspaces);
+    expect(app.renderSortableSidebarWorkspacesCalls).toHaveLength(1);
+    expect(app.renderSortableSidebarWorkspacesCalls[0].workspaces).toBe(nextWorkspaces);
   });
 
   test("plugin resizer delegates to host startResize", () => {

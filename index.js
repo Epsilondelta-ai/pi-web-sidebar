@@ -5,7 +5,6 @@ const ICONS = {
   plus: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>',
   refresh: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>',
   collapse: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>',
-  settings: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg>',
 };
 
 export default function activate(context) {
@@ -18,6 +17,7 @@ export function createSidebarController(app) {
   let wrap = null;
   let nativeSidebar = null;
   let nativePlaceholder = null;
+  let originalRenderSidebarWorkspaces = null;
 
   function mount() {
     const body = app.querySelector(".app-body");
@@ -42,6 +42,7 @@ export function createSidebarController(app) {
 
     app.dataset.sidebar = app.dataset.sidebar || "open";
     bindResizer(wrap, app);
+    installSortableRenderBridge();
     renderExistingWorkspaces();
     app.restoreSidebar?.();
   }
@@ -55,6 +56,7 @@ export function createSidebarController(app) {
       nativeSidebar.toggleAttribute("hidden", app.dataset.sidebar === "collapsed");
     }
 
+    restoreSidebarRenderer();
     nativePlaceholder = null;
     nativeSidebar = null;
     wrap = null;
@@ -65,6 +67,36 @@ export function createSidebarController(app) {
     if (Array.isArray(app.workspaceList)) {
       app.renderSidebarWorkspaces?.(app.workspaceList);
     }
+  }
+
+  function installSortableRenderBridge() {
+    if (originalRenderSidebarWorkspaces || typeof app.renderSidebarWorkspaces !== "function") {
+      return;
+    }
+
+    originalRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
+    app.renderSidebarWorkspaces = function renderPiWebSidebarWorkspaces(workspaces) {
+      const result = originalRenderSidebarWorkspaces.call(this, workspaces);
+      activateSortableSidebar(workspaces);
+      return result;
+    };
+  }
+
+  function restoreSidebarRenderer() {
+    if (originalRenderSidebarWorkspaces) {
+      app.renderSidebarWorkspaces = originalRenderSidebarWorkspaces;
+    }
+
+    originalRenderSidebarWorkspaces = null;
+  }
+
+  function activateSortableSidebar(workspaces = app.workspaceList) {
+    const section = wrap?.querySelector(".sidebar .sb-section");
+    if (!section || !Array.isArray(workspaces) || typeof app.renderSortableSidebarWorkspaces !== "function") {
+      return;
+    }
+
+    void Promise.resolve().then(() => app.renderSortableSidebarWorkspaces(section, workspaces));
   }
 
   return { mount, dispose, get element() { return wrap; } };
@@ -104,14 +136,6 @@ function createSidebar() {
     `<button class="refresh" type="button" data-action="refresh-workspaces" title="refresh workspaces" aria-label="refresh workspaces">${ICONS.refresh}</button>`,
     `<button class="sb-collapse" type="button" data-action="collapse-sidebar" title="collapse sidebar" aria-label="collapse sidebar">${ICONS.collapse}</button>`,
     '</span></div>',
-    '</div>',
-    '<div class="sb-footer">',
-    '<button class="update-release" type="button" data-action="show-update-tip" hidden>New Version Released!</button>',
-    '<span class="update-tip" data-update-tip hidden>Run <code>pi-web update</code>, then restart pi-web.</span>',
-    '<div class="sb-footer-status">',
-    '<span class="status-dot"></span><span>connecting</span>',
-    `<button class="sb-settings" type="button" data-action="open-settings" title="settings" aria-label="open settings">${ICONS.settings}</button>`,
-    '</div>',
     '</div>',
     '</aside>',
     '<div class="sb-resizer" role="separator" aria-orientation="vertical" aria-label="resize sidebar" title="drag to resize"></div>',
