@@ -38,11 +38,25 @@ function setupApp() {
   app.applyGrid = () => app.applyGridCalls += 1;
   app.startResizeCalls = 0;
   app.startResize = () => app.startResizeCalls += 1;
+  app.reorderWorkspacesCalls = [];
+  app.reorderWorkspaces = (ids) => app.reorderWorkspacesCalls.push(ids);
+  app.reorderWorkspaceSessionsCalls = [];
+  app.reorderWorkspaceSessions = (workspaceId, ids) => app.reorderWorkspaceSessionsCalls.push({ workspaceId, ids });
   app.sidebarSortableCleanupCalls = 0;
   app.sidebarSortableCleanup = () => app.sidebarSortableCleanupCalls += 1;
   app.sidebarSortableRoot = { unmount: () => app.sidebarSortableUnmounted = true };
   app.sidebarSortableRenderToken = Symbol("old-render");
   return app;
+}
+
+function dragEvent(type, options = {}) {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  event.dataTransfer = {
+    setData: () => undefined,
+    setDragImage: () => undefined,
+  };
+  Object.defineProperty(event, "clientY", { value: options.clientY || 0 });
+  return event;
 }
 
 describe("pi-web-sidebar plugin", () => {
@@ -154,6 +168,51 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector(".workspace-drag-handle")?.getAttribute("draggable")).toBe("true");
     expect(app.querySelector(".session-drag-handle")?.getAttribute("draggable")).toBe("true");
+  });
+
+  test("fallback drag previews workspace and session moves before drop", async () => {
+    const app = setupApp();
+    app.renderSidebarWorkspaces = (workspaces) => {
+      app.renderSidebarWorkspacesCalls.push(workspaces);
+      const section = app.querySelector("[data-pi-web-sidebar-plugin] .sb-section");
+      section.insertAdjacentHTML("beforeend", `
+        <div class="workspace-group" data-workspace-group="w1">
+          <div class="workspace-shell"><button class="ws-row" type="button"><span class="label">one</span></button></div>
+          <div class="sessions">
+            <div class="session-row" data-session="s1" data-workspace="w1"><button class="session-main" type="button"><span class="title">one</span></button></div>
+            <div class="session-row" data-session="s2" data-workspace="w1"><button class="session-main" type="button"><span class="title">two</span></button></div>
+          </div>
+        </div>
+        <div class="workspace-group" data-workspace-group="w2">
+          <div class="workspace-shell"><button class="ws-row" type="button"><span class="label">two</span></button></div>
+          <div class="sessions"></div>
+        </div>`);
+    };
+    app.baseRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
+    const controller = createSidebarController(app);
+
+    controller.mount();
+    await Promise.resolve();
+    const workspaceHandle = app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle");
+    const workspaceTarget = app.querySelector("[data-workspace-group='w2']");
+    workspaceTarget.getBoundingClientRect = () => ({ top: 0, height: 10 });
+    workspaceHandle.dispatchEvent(dragEvent("dragstart"));
+    expect(app.querySelector("[data-pi-web-sidebar-plugin]").classList.contains("pi-web-sidebar-dragging-workspace")).toBe(true);
+    workspaceTarget.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
+    app.querySelector("[data-pi-web-sidebar-plugin]").dispatchEvent(dragEvent("drop"));
+
+    expect([...app.querySelectorAll(".workspace-group")].map((group) => group.dataset.workspaceGroup)).toEqual(["w2", "w1"]);
+    expect(app.reorderWorkspacesCalls.at(-1)).toEqual(["w2", "w1"]);
+
+    const sessionHandle = app.querySelector("[data-session='s1'] .session-drag-handle");
+    const sessionTarget = app.querySelector("[data-session='s2']");
+    sessionTarget.getBoundingClientRect = () => ({ top: 0, height: 10 });
+    sessionHandle.dispatchEvent(dragEvent("dragstart"));
+    sessionTarget.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
+    app.querySelector("[data-pi-web-sidebar-plugin]").dispatchEvent(dragEvent("drop"));
+
+    expect([...app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")].map((row) => row.dataset.session)).toEqual(["s2", "s1"]);
+    expect(app.reorderWorkspaceSessionsCalls.at(-1)).toEqual({ workspaceId: "w1", ids: ["s2", "s1"] });
   });
 
   test("plugin resizer delegates to host startResize", () => {

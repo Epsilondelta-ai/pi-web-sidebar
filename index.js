@@ -1,5 +1,6 @@
 const PLUGIN_PANEL_ATTR = "data-pi-web-sidebar-plugin";
 const ORIGINAL_PLACEHOLDER_ATTR = "data-pi-web-sidebar-original-placeholder";
+const FALLBACK_STYLE_ID = "pi-web-sidebar-fallback-drag-style";
 
 const ICONS = {
   plus: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>',
@@ -42,6 +43,7 @@ export function createSidebarController(app) {
       body.insertBefore(wrap, body.firstElementChild);
     }
 
+    installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
     bindResizer(wrap, app);
     bindFallbackDrag(wrap, app);
@@ -110,43 +112,95 @@ export function createSidebarController(app) {
 
   function startDrag(item) {
     draggedItem = item;
+    wrap.classList.add("pi-web-sidebar-dragging", `pi-web-sidebar-dragging-${item.type}`);
+    item.element?.classList.add("pi-web-sidebar-drag-source");
   }
 
-  function finishDrag(target) {
+  function clearDragState() {
+    wrap?.classList.remove("pi-web-sidebar-dragging", "pi-web-sidebar-dragging-workspace", "pi-web-sidebar-dragging-session");
+    wrap?.querySelectorAll(".pi-web-sidebar-drag-source, .pi-web-sidebar-drop-target").forEach((node) => {
+      node.classList.remove("pi-web-sidebar-drag-source", "pi-web-sidebar-drop-target");
+    });
+    draggedItem = null;
+  }
+
+  function previewDrag(target, event) {
     if (!draggedItem || !target) {
-      draggedItem = null;
       return;
     }
 
     if (draggedItem.type === "workspace") {
-      moveWorkspaceBefore(draggedItem.element, target.closest(".workspace-group"));
+      moveWorkspaceNear(draggedItem.element, target.closest(".workspace-group"), event);
     }
 
     if (draggedItem.type === "session") {
-      moveSessionBefore(draggedItem.element, target.closest(".session-row[data-session]"));
+      moveSessionNear(draggedItem.element, target.closest(".session-row[data-session]"), event);
     }
-
-    draggedItem = null;
   }
 
-  function moveWorkspaceBefore(source, target) {
-    if (!source || !target || source === target) {
+  function finishDrag() {
+    if (!draggedItem) {
+      clearDragState();
       return;
     }
 
-    target.parentElement.insertBefore(source, target);
+    if (draggedItem.type === "workspace") {
+      persistWorkspaceOrder();
+    }
+
+    if (draggedItem.type === "session") {
+      persistSessionOrder(draggedItem.element?.dataset.workspace);
+    }
+
+    clearDragState();
+  }
+
+  function insertNear(source, target, event) {
+    if (!source || !target || source === target || !target.parentElement) {
+      return false;
+    }
+
+    const rect = target.getBoundingClientRect?.();
+    const after = rect && Number.isFinite(rect.top) ? event.clientY > rect.top + rect.height / 2 : false;
+    const anchor = after ? target.nextSibling : target;
+    if (anchor === source) {
+      return false;
+    }
+
+    wrap.querySelectorAll(".pi-web-sidebar-drop-target").forEach((node) => node.classList.remove("pi-web-sidebar-drop-target"));
+    target.parentElement.insertBefore(source, anchor);
+    target.classList.add("pi-web-sidebar-drop-target");
+    return true;
+  }
+
+  function moveWorkspaceNear(source, target, event) {
+    if (insertNear(source, target, event)) {
+      persistWorkspaceOrder();
+    }
+  }
+
+  function moveSessionNear(source, target, event) {
+    if (!source || !target || source.dataset.workspace !== target.dataset.workspace) {
+      return;
+    }
+
+    if (insertNear(source, target, event)) {
+      persistSessionOrder(source.dataset.workspace);
+    }
+  }
+
+  function persistWorkspaceOrder() {
     const ids = [...wrap.querySelectorAll(".workspace-group[data-workspace-group]")].map((group) => group.dataset.workspaceGroup);
     app.reorderWorkspaces?.(ids);
   }
 
-  function moveSessionBefore(source, target) {
-    if (!source || !target || source === target || source.dataset.workspace !== target.dataset.workspace) {
+  function persistSessionOrder(workspaceId) {
+    if (!workspaceId) {
       return;
     }
 
-    target.parentElement.insertBefore(source, target);
-    const workspaceId = source.dataset.workspace;
-    const ids = [...target.parentElement.querySelectorAll(".session-row[data-session]")].map((row) => row.dataset.session);
+    const group = wrap.querySelector(`.workspace-group[data-workspace-group='${cssEscape(workspaceId)}']`);
+    const ids = [...group?.querySelectorAll(".session-row[data-session]") || []].map((row) => row.dataset.session);
     app.reorderWorkspaceSessions?.(workspaceId, ids);
   }
 
@@ -170,20 +224,57 @@ export function createSidebarController(app) {
     panel.addEventListener("dragover", (event) => {
       if (draggedItem && event.target.closest(".workspace-group, .session-row[data-session]")) {
         event.preventDefault();
+        previewDrag(event.target, event);
       }
     });
     panel.addEventListener("drop", (event) => {
       event.preventDefault();
-      finishDrag(event.target);
-      host.renderWorkspaces?.(host.workspaceList || []);
+      finishDrag();
     });
-    panel.addEventListener("dragend", () => {
-      draggedItem = null;
-    });
+    panel.addEventListener("dragend", clearDragState);
     panel.dataset.piWebSidebarFallbackDragBound = "true";
   }
 
   return { mount, dispose, get element() { return wrap; } };
+}
+
+function installFallbackDragStyles() {
+  if (document.getElementById(FALLBACK_STYLE_ID)) {
+    return;
+  }
+
+  const style = document.createElement("style");
+  style.id = FALLBACK_STYLE_ID;
+  style.textContent = `
+    [data-pi-web-sidebar-plugin] .workspace-group,
+    [data-pi-web-sidebar-plugin] .session-row[data-session] {
+      transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
+    }
+    [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
+      display: none !important;
+    }
+    [data-pi-web-sidebar-plugin] .pi-web-sidebar-drag-source {
+      opacity: 0.45;
+    }
+    [data-pi-web-sidebar-plugin] .pi-web-sidebar-drop-target {
+      background: color-mix(in srgb, var(--accent, #7dd3fc) 12%, transparent);
+    }
+    [data-pi-web-sidebar-drag-handle] {
+      cursor: grab;
+    }
+    [data-pi-web-sidebar-drag-handle]:active {
+      cursor: grabbing;
+    }
+  `;
+  document.head.append(style);
+}
+
+function cssEscape(value) {
+  if (globalThis.CSS?.escape) {
+    return CSS.escape(value);
+  }
+
+  return String(value).replace(/['\\]/g, "\\$&");
 }
 
 function ensureWorkspaceDragHandles(root) {
