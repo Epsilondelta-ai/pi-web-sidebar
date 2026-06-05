@@ -9,9 +9,9 @@ import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { readStoredObject, storeJson } from "./storage";
 import { ORIGINAL_PLACEHOLDER_ATTR, PLUGIN_PANEL_ATTR } from "./constants";
-import type { AppElement, DragItem, PluginContext, SidebarController, SidebarWorkspace } from "./types";
+import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace } from "./types";
 
-type RefreshOptions = { allowEmpty?: boolean };
+type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
 
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
@@ -96,6 +96,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
   async function refreshCurrentWorkspaces(options: RefreshOptions = {}): Promise<SidebarWorkspace[]> {
     const sequence: number = ++refreshSequence;
+
+    if (options.emptySessionsForWorkspaceId) {
+      workspaces = withoutWorkspaceSessions(workspaces, app, options.emptySessionsForWorkspaceId);
+      renderCurrentWorkspaces();
+    }
 
     try {
       const nextWorkspaces: SidebarWorkspace[] = await loadWorkspaces(context);
@@ -308,6 +313,30 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   return { mount, dispose, render, refresh: refreshCurrentWorkspaces, get element(): HTMLElement | null { return wrap; } };
+}
+
+function withoutWorkspaceSessions(
+  workspaces: SidebarWorkspace[],
+  app: AppElement,
+  workspaceId: string,
+): SidebarWorkspace[] {
+  let activeSessionCleared: boolean = false;
+  const nextWorkspaces: SidebarWorkspace[] = workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    if (workspace.id !== workspaceId) {
+      return workspace;
+    }
+
+    activeSessionCleared = (workspace.sessions || []).some(
+      (session: SidebarSession): boolean => session.id === app.dataset.activeSessionId,
+    );
+    return { ...workspace, sessions: [], sessionCount: 0, live: false };
+  });
+
+  if (activeSessionCleared) {
+    app.dataset.activeSessionId = "";
+  }
+
+  return nextWorkspaces;
 }
 
 function validPluginSidebar(candidate: Element | null): HTMLElement | null {

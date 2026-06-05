@@ -10,7 +10,7 @@ import { collapseSidebarLayout, routeWorkspace } from "./layout";
 import { markSelectedSession } from "./render";
 import type { AppElement, PluginContext, SidebarBridge, SidebarWorkspace } from "./types";
 
-type RefreshWorkspaces = (options?: { allowEmpty?: boolean }) => Promise<SidebarWorkspace[]>;
+type RefreshWorkspaces = (options?: { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string }) => Promise<SidebarWorkspace[]>;
 
 export function bindWorkspaceActions(
   wrap: HTMLElement,
@@ -123,9 +123,10 @@ async function handleMutatingWorkspaceAction(
   }
 
   if (action === "delete-workspace-sessions") {
-    await deleteWorkspaceSessionList(context, target.dataset.workspace);
-    await refreshWorkspaces();
-    sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: target.dataset.workspace || "" });
+    const workspaceId: string | undefined = target.dataset.workspace;
+    await deleteWorkspaceSessionList(context, workspaceId);
+    await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
+    sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: workspaceId || "" });
     return true;
   }
 
