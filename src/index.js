@@ -14,10 +14,72 @@ const ICONS = {
   trash: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
 };
 
+const NOOP_SIDEBAR_BRIDGE = {
+  emitState: () => undefined,
+  emitEvent: () => undefined,
+  dispose: () => undefined,
+};
+
 export default function activate(context) {
   const controller = createSidebarController(context.app, context);
   controller.mount();
   return () => controller.dispose();
+}
+
+function createSidebarBridge(app, context, getWorkspaces, getElement, refresh) {
+  const rxjs = context.rxjs;
+  if (typeof rxjs?.BehaviorSubject !== "function" || typeof rxjs?.Subject !== "function") {
+    return NOOP_SIDEBAR_BRIDGE;
+  }
+
+  let latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement());
+  const state$ = new rxjs.BehaviorSubject(latestSnapshot);
+  const events$ = new rxjs.Subject();
+  const api = {
+    state$,
+    events$,
+    refresh,
+    getSnapshot: () => latestSnapshot,
+  };
+  app.piWebSidebar = api;
+
+  return {
+    emitState(reason) {
+      latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement());
+      state$.next(latestSnapshot);
+      events$.next({ type: "state", reason, snapshot: latestSnapshot });
+    },
+    emitEvent(type, detail = {}) {
+      events$.next({ type, detail, snapshot: latestSnapshot });
+    },
+    dispose() {
+      events$.next({ type: "disposed", detail: {}, snapshot: latestSnapshot });
+      state$.complete();
+      events$.complete();
+      if (app.piWebSidebar === api) {
+        delete app.piWebSidebar;
+      }
+    },
+  };
+}
+
+function createSidebarSnapshot(app, workspaces, element) {
+  const workspaceList = Array.isArray(workspaces) ? workspaces : [];
+  const sessionCount = workspaceList.reduce((count, workspace) => count + (workspace.sessions || []).length, 0);
+  const width = Number(app.dataset.sidebarWidth || 280);
+
+  return {
+    activeSessionId: app.dataset.activeSessionId || "",
+    activeWorkspaceId: app.dataset.activeWorkspaceId || "",
+    collapsed: app.dataset.sidebar === "collapsed",
+    element,
+    openWorkspaceId: app.sidebarOpenWorkspaceId || "",
+    sessionCount,
+    sidebar: app.dataset.sidebar || "open",
+    width: Number.isFinite(width) ? width : 280,
+    workspaceCount: workspaceList.length,
+    workspaces: workspaceList,
+  };
 }
 
 export function createSidebarController(app, context = {}) {
@@ -26,6 +88,7 @@ export function createSidebarController(app, context = {}) {
   let nativePlaceholder = null;
   let draggedItem = null;
   let workspaces = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
+  const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
   function mount() {
     const body = app.querySelector(".app-body");
@@ -50,12 +113,13 @@ export function createSidebarController(app, context = {}) {
 
     installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
-    bindResizer(wrap, app);
+    bindResizer(wrap, app, sidebarBridge);
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap, app);
-    bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces);
+    bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
     renderCurrentWorkspaces();
     restoreSidebarLayout(app);
+    sidebarBridge.emitState("mounted");
     void refreshCurrentWorkspaces({ quiet: true });
   }
 
@@ -73,12 +137,14 @@ export function createSidebarController(app, context = {}) {
     nativeSidebar = null;
     wrap = null;
     applySidebarGrid(app);
+    sidebarBridge.dispose();
   }
 
   function renderCurrentWorkspaces() {
     renderPluginWorkspaceList(wrap, app, workspaces);
     ensureWorkspaceDragHandles(wrap);
     ensureSessionDragHandles(wrap);
+    sidebarBridge.emitState("render-workspaces");
   }
 
   async function refreshCurrentWorkspaces() {
@@ -86,6 +152,7 @@ export function createSidebarController(app, context = {}) {
       const nextWorkspaces = await loadWorkspaces(context);
       workspaces = nextWorkspaces;
       renderCurrentWorkspaces();
+      sidebarBridge.emitEvent("refresh-workspaces", { workspaceCount: workspaces.length });
     } catch (error) {
       console.warn("pi-web-sidebar failed to refresh workspaces", error);
     }
@@ -181,6 +248,7 @@ export function createSidebarController(app, context = {}) {
   function moveWorkspaceNear(source, target, event) {
     if (insertNear(source, target, event)) {
       persistWorkspaceOrder();
+      sidebarBridge.emitEvent("workspace-order-preview", { ids: currentWorkspaceOrder() });
     }
   }
 
@@ -191,12 +259,28 @@ export function createSidebarController(app, context = {}) {
 
     if (insertNear(source, target, event)) {
       persistSessionOrder(source.dataset.workspace);
+      sidebarBridge.emitEvent("session-order-preview", {
+        workspaceId: source.dataset.workspace,
+        ids: currentSessionOrder(source.dataset.workspace),
+      });
     }
   }
 
+  function currentWorkspaceOrder() {
+    return [...wrap.querySelectorAll(".workspace-group[data-workspace-group]")].map((group) => group.dataset.workspaceGroup);
+  }
+
+  function currentSessionOrder(workspaceId) {
+    if (!workspaceId) {
+      return [];
+    }
+
+    const group = wrap.querySelector(`.workspace-group[data-workspace-group='${cssEscape(workspaceId)}']`);
+    return [...group?.querySelectorAll(".session-row[data-session]") || []].map((row) => row.dataset.session);
+  }
+
   function persistWorkspaceOrder() {
-    const ids = [...wrap.querySelectorAll(".workspace-group[data-workspace-group]")].map((group) => group.dataset.workspaceGroup);
-    storeWorkspaceOrder(ids);
+    storeWorkspaceOrder(currentWorkspaceOrder());
   }
 
   function persistSessionOrder(workspaceId) {
@@ -204,9 +288,7 @@ export function createSidebarController(app, context = {}) {
       return;
     }
 
-    const group = wrap.querySelector(`.workspace-group[data-workspace-group='${cssEscape(workspaceId)}']`);
-    const ids = [...group?.querySelectorAll(".session-row[data-session]") || []].map((row) => row.dataset.session);
-    storeSessionOrder(workspaceId, ids);
+    storeSessionOrder(workspaceId, currentSessionOrder(workspaceId));
   }
 
   function bindFallbackDrag(panel, host) {
@@ -251,7 +333,7 @@ export function createSidebarController(app, context = {}) {
   return { mount, dispose, render, refresh: refreshCurrentWorkspaces, get element() { return wrap; } };
 }
 
-function bindWorkspaceActions(wrap, app, context, refreshWorkspaces) {
+function bindWorkspaceActions(wrap, app, context, refreshWorkspaces, sidebarBridge) {
   if (wrap.dataset.piWebSidebarWorkspaceActionsBound === "true") {
     return;
   }
@@ -269,7 +351,7 @@ function bindWorkspaceActions(wrap, app, context, refreshWorkspaces) {
       event.stopPropagation();
     }
 
-    if (await handleWorkspaceAction(action, target, app, context, refreshWorkspaces)) {
+    if (await handleWorkspaceAction(action, target, app, context, refreshWorkspaces, sidebarBridge)) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -291,11 +373,12 @@ function shouldHandleActionInsidePlugin(action) {
   ].includes(action);
 }
 
-async function handleWorkspaceAction(action, target, app, context, refreshWorkspaces) {
+async function handleWorkspaceAction(action, target, app, context, refreshWorkspaces, sidebarBridge) {
   if (action === "refresh-workspaces") {
     target.disabled = true;
     try {
       await refreshWorkspaces();
+      sidebarBridge.emitEvent("refresh-click", {});
     } finally {
       target.disabled = false;
     }
@@ -304,6 +387,8 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
 
   if (action === "toggle-workspace") {
     toggleWorkspaceGroup(app, target.dataset.workspace);
+    sidebarBridge.emitEvent("toggle-workspace", { workspaceId: target.dataset.workspace || "" });
+    sidebarBridge.emitState("toggle-workspace");
     return true;
   }
 
@@ -311,6 +396,7 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
     if (confirm(`Remove workspace ${target.dataset.workspace} from this view?`)) {
       await deleteWorkspaceById(context, target.dataset.workspace);
       await refreshWorkspaces();
+      sidebarBridge.emitEvent("delete-workspace", { workspaceId: target.dataset.workspace || "" });
     }
     return true;
   }
@@ -318,17 +404,21 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
   if (action === "new-session") {
     await createWorkspaceSession(context, target.dataset.workspace);
     await refreshWorkspaces();
+    sidebarBridge.emitEvent("new-session", { workspaceId: target.dataset.workspace || "" });
     return true;
   }
 
   if (action === "delete-workspace-sessions") {
     await deleteWorkspaceSessionList(context, target.dataset.workspace);
     await refreshWorkspaces();
+    sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: target.dataset.workspace || "" });
     return true;
   }
 
   if (action === "collapse-sidebar") {
     collapseSidebarLayout(app, true);
+    sidebarBridge.emitEvent("collapse-sidebar", {});
+    sidebarBridge.emitState("collapse-sidebar");
     return true;
   }
 
@@ -339,18 +429,26 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
 
   if (action === "rename-session") {
     await renameSidebarSession(context, target.closest(".session-row"));
+    sidebarBridge.emitEvent("rename-session", { sessionId: target.closest(".session-row")?.dataset.session || "" });
+    sidebarBridge.emitState("rename-session");
     return true;
   }
 
   if (action === "delete-session") {
     await deleteSidebarSession(context, app, target.closest(".session-row"));
     await refreshWorkspaces();
+    sidebarBridge.emitEvent("delete-session", { sessionId: target.closest(".session-row")?.dataset.session || "" });
     return true;
   }
 
   if (action === "pick-session") {
     markSelectedSession(target, app);
     routeWorkspace(app);
+    sidebarBridge.emitEvent("pick-session", {
+      sessionId: target.dataset.session || "",
+      workspaceId: target.dataset.workspace || "",
+    });
+    sidebarBridge.emitState("pick-session");
     return false;
   }
 
@@ -853,13 +951,13 @@ function resetHostSidebarRenderState(app) {
   app.sidebarSortableRenderToken = undefined;
 }
 
-function bindResizer(wrap, app) {
+function bindResizer(wrap, app, sidebarBridge) {
   const resizer = wrap.querySelector(".sb-resizer");
   if (!resizer || resizer.dataset.piWebSidebarResizeBound === "true") {
     return;
   }
 
-  resizer.addEventListener("pointerdown", (event) => startSidebarResize(app, event));
+  resizer.addEventListener("pointerdown", (event) => startSidebarResize(app, event, sidebarBridge));
   resizer.dataset.piWebSidebarResizeBound = "true";
 }
 
@@ -1229,7 +1327,7 @@ function applySidebarGrid(app, width = Number(app.dataset.sidebarWidth || 280)) 
   body.style.gridTemplateColumns = collapsed ? collapsedColumns : expandedColumns;
 }
 
-function startSidebarResize(app, event) {
+function startSidebarResize(app, event, sidebarBridge = NOOP_SIDEBAR_BRIDGE) {
   event.preventDefault();
   const startX = event.clientX;
   const startWidth = Number(app.dataset.sidebarWidth || 280);
@@ -1238,9 +1336,11 @@ function startSidebarResize(app, event) {
     app.dataset.sidebarWidth = String(width);
     applySidebarGrid(app, width);
     storeSidebarWidth(width);
+    sidebarBridge.emitState("resize-sidebar");
   };
   const stopResize = () => {
     storeSidebarWidth(Number(app.dataset.sidebarWidth || startWidth));
+    sidebarBridge.emitEvent("resize-sidebar", { width: Number(app.dataset.sidebarWidth || startWidth) });
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", stopResize);
   };

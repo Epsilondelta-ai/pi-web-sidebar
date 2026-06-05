@@ -74,6 +74,45 @@ function testContext(app, overrides = {}) {
   return context;
 }
 
+class TestSubject {
+  constructor(initialValue) {
+    this.closed = false;
+    this.subscribers = [];
+    this.value = initialValue;
+  }
+
+  subscribe(callback) {
+    this.subscribers.push(callback);
+    if (arguments.length > 0 && this.value !== undefined) {
+      callback(this.value);
+    }
+
+    return {
+      unsubscribe: () => {
+        this.subscribers = this.subscribers.filter((subscriber) => subscriber !== callback);
+      },
+    };
+  }
+
+  next(value) {
+    this.value = value;
+    for (const subscriber of this.subscribers) {
+      subscriber(value);
+    }
+  }
+
+  complete() {
+    this.closed = true;
+  }
+}
+
+function testRxjs() {
+  return {
+    Subject: TestSubject,
+    BehaviorSubject: TestSubject,
+  };
+}
+
 function dragEvent(type, options = {}) {
   const event = new window.Event(type, { bubbles: true, cancelable: true });
   event.dataTransfer = {
@@ -172,6 +211,30 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w2'] .label").textContent).toBe("two");
     expect(app.renderSidebarWorkspacesCalls).toEqual([]);
     expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
+  });
+
+  test("exposes RxJS sidebar state and events for other plugins", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
+    const controller = createSidebarController(app, testContext(app, { rxjs: testRxjs() }));
+    const states = [];
+    const events = [];
+
+    controller.mount();
+    const stateSubscription = app.piWebSidebar.state$.subscribe((state) => states.push(state));
+    const eventSubscription = app.piWebSidebar.events$.subscribe((event) => events.push(event));
+    controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
+
+    expect(app.piWebSidebar.getSnapshot().workspaceCount).toBe(1);
+    expect(app.piWebSidebar.getSnapshot().sessionCount).toBe(0);
+    expect(states.at(-1).workspaces[0].id).toBe("w2");
+    expect(events.some((event) => event.type === "state" && event.reason === "render-workspaces")).toBe(true);
+
+    controller.dispose();
+
+    expect(app.piWebSidebar).toBeUndefined();
+    expect(stateSubscription).toBeTruthy();
+    expect(eventSubscription).toBeTruthy();
   });
 
   test("adds fallback grip handles to plugin-rendered rows", async () => {

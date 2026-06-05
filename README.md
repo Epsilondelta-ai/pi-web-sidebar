@@ -39,6 +39,10 @@ The `+ open` button is implemented inside this plugin: frontend opens a custom f
 opens the selected path through pi-web's HTTP workspace API. Workspace refresh, create/delete session, delete workspace,
 sidebar resize/collapse, and reorder persistence are handled by this plugin without calling host app methods.
 
+When pi-web provides `context.rxjs`, the plugin exposes `app.piWebSidebar` as an explicit cross-plugin bridge:
+`state$` is a `BehaviorSubject` with the latest sidebar snapshot, and `events$` is a `Subject` for sidebar actions.
+Other plugins can subscribe with `context.app.piWebSidebar?.state$.subscribe(...)` after this plugin is active.
+
 Rebuild backend binaries with:
 
 ```sh
