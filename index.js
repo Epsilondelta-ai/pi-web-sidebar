@@ -19,7 +19,6 @@ export function createSidebarController(app, context = {}) {
   let wrap = null;
   let nativeSidebar = null;
   let nativePlaceholder = null;
-  let originalRenderSidebarWorkspaces = null;
   let draggedItem = null;
 
   function mount() {
@@ -48,8 +47,8 @@ export function createSidebarController(app, context = {}) {
     bindResizer(wrap, app);
     bindOpenWorkspace(wrap, app, context);
     bindFallbackDrag(wrap, app);
-    installSortableRenderBridge();
-    renderExistingWorkspaces();
+    bindWorkspaceActions(wrap, app);
+    renderCurrentWorkspaces();
     app.restoreSidebar?.();
   }
 
@@ -63,51 +62,14 @@ export function createSidebarController(app, context = {}) {
       nativeSidebar.toggleAttribute("hidden", app.dataset.sidebar === "collapsed");
     }
 
-    restoreSidebarRenderer();
     nativePlaceholder = null;
     nativeSidebar = null;
     wrap = null;
     app.applyGrid?.();
   }
 
-  function renderExistingWorkspaces() {
-    if (Array.isArray(app.workspaceList)) {
-      app.renderSidebarWorkspaces?.(app.workspaceList);
-    }
-  }
-
-  function installSortableRenderBridge() {
-    if (originalRenderSidebarWorkspaces || typeof app.renderSidebarWorkspaces !== "function") {
-      return;
-    }
-
-    originalRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
-    app.renderSidebarWorkspaces = function renderPiWebSidebarWorkspaces(workspaces) {
-      const result = originalRenderSidebarWorkspaces.call(this, workspaces);
-      ensureFallbackDragHandles();
-      activateSortableSidebar(workspaces);
-      return result;
-    };
-  }
-
-  function restoreSidebarRenderer() {
-    if (originalRenderSidebarWorkspaces) {
-      app.renderSidebarWorkspaces = originalRenderSidebarWorkspaces;
-    }
-
-    originalRenderSidebarWorkspaces = null;
-  }
-
-  function activateSortableSidebar(workspaces = app.workspaceList) {
-    const section = wrap?.querySelector(".sidebar .sb-section");
-    if (!section || !Array.isArray(workspaces) || typeof app.renderSortableSidebarWorkspaces !== "function") {
-      return;
-    }
-
-    void Promise.resolve().then(() => app.renderSortableSidebarWorkspaces(section, workspaces));
-  }
-
-  function ensureFallbackDragHandles() {
+  function renderCurrentWorkspaces() {
+    renderPluginWorkspaceList(wrap, app, app.workspaceList || []);
     ensureWorkspaceDragHandles(wrap);
     ensureSessionDragHandles(wrap);
   }
@@ -259,7 +221,352 @@ export function createSidebarController(app, context = {}) {
     panel.dataset.piWebSidebarFallbackDragBound = "true";
   }
 
-  return { mount, dispose, get element() { return wrap; } };
+  return { mount, dispose, render: renderCurrentWorkspaces, get element() { return wrap; } };
+}
+
+function bindWorkspaceActions(wrap, app) {
+  if (wrap.dataset.piWebSidebarWorkspaceActionsBound === "true") {
+    return;
+  }
+
+  wrap.addEventListener("click", async (event) => {
+    const target = event.target.closest("[data-action], .session-row[data-session]");
+    if (!target || !wrap.contains(target)) {
+      return;
+    }
+
+    const action = target.dataset.action || (target.dataset.session ? "pick-session" : "");
+    if (await handleWorkspaceAction(action, target, app)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+  wrap.dataset.piWebSidebarWorkspaceActionsBound = "true";
+}
+
+async function handleWorkspaceAction(action, target, app) {
+  if (action === "refresh-workspaces") {
+    target.disabled = true;
+    try {
+      await app.refreshWorkspaces?.();
+      renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    } finally {
+      target.disabled = false;
+    }
+    return true;
+  }
+
+  if (action === "toggle-workspace") {
+    toggleWorkspaceGroup(app, target.dataset.workspace);
+    return true;
+  }
+
+  if (action === "delete-workspace") {
+    await app.deleteWorkspace?.(target.dataset.workspace);
+    renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    return true;
+  }
+
+  if (action === "new-session") {
+    await app.newSession?.(target.dataset.workspace);
+    renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    return true;
+  }
+
+  if (action === "delete-workspace-sessions") {
+    await app.deleteWorkspaceSessions?.(target.dataset.workspace);
+    renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    return true;
+  }
+
+  if (action === "pick-session") {
+    await pickSession(target, app);
+    return true;
+  }
+
+  return false;
+}
+
+async function pickSession(row, app) {
+  if (typeof app.pickSession === "function") {
+    await app.pickSession(row);
+  } else if (row.dataset.session && typeof app.loadSession === "function") {
+    app.dataset.activeWorkspaceId = row.dataset.workspace || app.dataset.activeWorkspaceId || "";
+    app.dataset.activeSessionId = row.dataset.session;
+    await app.loadSession(row.dataset.session);
+  }
+
+  markSelectedSession(row, app);
+  app.route?.("workspace");
+}
+
+function markSelectedSession(row, app) {
+  app.querySelectorAll(`[${PLUGIN_PANEL_ATTR}] .session-row.active`).forEach((session) => {
+    session.classList.remove("active");
+  });
+  row.classList.add("active");
+}
+
+function toggleWorkspaceGroup(app, workspaceId) {
+  if (!workspaceId) {
+    return;
+  }
+
+  const groups = app.querySelectorAll(`[${PLUGIN_PANEL_ATTR}] [data-workspace-group]`);
+  const selected = [...groups].find((group) => group.dataset.workspaceGroup === workspaceId);
+  const shouldOpen = !!selected?.querySelector(".sessions")?.hidden;
+  app.sidebarOpenWorkspaceId = shouldOpen ? workspaceId : "";
+
+  groups.forEach((group) => {
+    const open = group.dataset.workspaceGroup === workspaceId && shouldOpen;
+    const sessions = group.querySelector(".sessions");
+    const row = group.querySelector(".ws-row");
+    if (sessions) {
+      sessions.hidden = !open;
+    }
+    row?.classList.toggle("open", open);
+    row?.setAttribute("aria-expanded", String(open));
+  });
+
+  window.dispatchEvent(new CustomEvent("pi-sidebar-workspace-state", {
+    detail: {
+      activeWorkspaceId: app.dataset.activeWorkspaceId || "",
+      openWorkspaceId: app.sidebarOpenWorkspaceId || "",
+    },
+  }));
+}
+
+function renderPluginWorkspaceList(wrap, app, workspaces) {
+  const section = wrap?.querySelector(".sidebar .sb-section");
+  const head = section?.querySelector(".sb-head");
+  if (!section || !head || !Array.isArray(workspaces)) {
+    return;
+  }
+
+  section
+    .querySelectorAll(":scope > .workspace-group, :scope > [data-sortable-workspaces]")
+    .forEach((node) => node.remove());
+  for (const workspace of orderedWorkspaces(workspaces)) {
+    section.append(createPluginWorkspaceGroup(workspace, app));
+  }
+}
+
+function createPluginWorkspaceGroup(workspace, app) {
+  const group = document.createElement("div");
+  const active = workspace.id === app.dataset.activeWorkspaceId;
+  const openId = app.sidebarOpenWorkspaceId ?? app.dataset.activeWorkspaceId ?? "";
+  const open = workspace.id === openId;
+  group.className = "workspace-group";
+  group.dataset.workspaceGroup = workspace.id;
+  group.classList.toggle("active", active);
+  group.classList.toggle("has-active-session", workspaceHasActiveSession(workspace));
+  group.append(createWorkspaceShell(workspace, app, open, active));
+  group.append(createSessionsList(workspace, app, open));
+  return group;
+}
+
+function createWorkspaceShell(workspace, app, open, active) {
+  const shell = document.createElement("div");
+  shell.className = "workspace-shell";
+  shell.append(createWorkspaceButton(workspace, app, open, active));
+  shell.append(createWorkspaceDeleteButton(workspace));
+  return shell;
+}
+
+function createWorkspaceButton(workspace, app, open, active) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = [
+    "ws-row",
+    open && "open",
+    active && "active",
+    workspaceHasActiveSession(workspace) && "has-active-session",
+  ].filter(Boolean).join(" ");
+  button.dataset.action = "toggle-workspace";
+  button.dataset.workspace = workspace.id;
+  button.setAttribute("aria-expanded", String(open));
+  button.setAttribute("aria-current", active ? "true" : "false");
+
+  const stack = document.createElement("span");
+  stack.className = "ws-stack";
+  const name = document.createElement("span");
+  name.className = "ws-name";
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.classList.toggle("live", !!workspace.live || workspaceHasActiveSession(workspace));
+  const label = document.createElement("span");
+  label.className = "label";
+  label.textContent = workspace.name || workspace.path || workspace.id;
+  name.append(dot, label);
+  const path = document.createElement("span");
+  path.className = "ws-path";
+  path.textContent = workspace.path || "";
+  stack.append(name, path);
+
+  const meta = document.createElement("span");
+  meta.className = "ws-meta";
+  meta.setAttribute("aria-label", `${workspaceSessionCount(workspace)} sessions`);
+  const count = document.createElement("span");
+  count.className = "ws-count";
+  count.textContent = String(workspaceSessionCount(workspace));
+  meta.append(count);
+  button.append(stack, meta);
+  return button;
+}
+
+function createWorkspaceDeleteButton(workspace) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "row-action danger";
+  button.dataset.action = "delete-workspace";
+  button.dataset.workspace = workspace.id;
+  button.title = "remove workspace";
+  button.setAttribute("aria-label", "remove workspace");
+  button.textContent = "×";
+  return button;
+}
+
+function createSessionsList(workspace, app, open) {
+  const sessions = document.createElement("div");
+  sessions.className = "sessions";
+  sessions.hidden = !open;
+
+  for (const session of orderedSessions(workspace)) {
+    sessions.append(createPluginSessionRow(session, workspace, app));
+  }
+
+  if (!workspace.sessions?.length) {
+    const empty = document.createElement("div");
+    empty.className = "sessions-empty";
+    empty.textContent = "no sessions yet · press N to start one";
+    sessions.append(empty);
+  } else {
+    sessions.append(createDeleteWorkspaceSessionsRow(workspace.id));
+  }
+
+  sessions.append(createNewSessionRow(workspace.id));
+  return sessions;
+}
+
+function createPluginSessionRow(session, workspace, app) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = [
+    "session-row",
+    session.id === app.dataset.activeSessionId && "active",
+    session.parentId && "child-session",
+  ].filter(Boolean).join(" ");
+  row.dataset.action = "pick-session";
+  row.dataset.session = session.id;
+  row.dataset.workspace = workspace.id;
+  row.dataset.title = session.title || session.name || session.id;
+  row.setAttribute("aria-current", session.id === app.dataset.activeSessionId ? "true" : "false");
+
+  const main = document.createElement("span");
+  main.className = "session-main";
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = session.title || session.name || session.id;
+  main.append(title);
+
+  const badges = sessionBadges(session);
+  if (badges.length) {
+    const meta = document.createElement("span");
+    meta.className = "session-meta";
+    meta.textContent = badges.join(" · ");
+    main.append(meta);
+  }
+
+  row.append(main);
+  return row;
+}
+
+function createDeleteWorkspaceSessionsRow(workspaceId) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "session-row clear-sessions-row";
+  row.dataset.action = "delete-workspace-sessions";
+  row.dataset.workspace = workspaceId;
+  row.innerHTML = `<span class="title">delete all sessions</span>`;
+  return row;
+}
+
+function createNewSessionRow(workspaceId) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "session-row new-session-row";
+  row.dataset.action = "new-session";
+  row.dataset.workspace = workspaceId;
+  row.innerHTML = `<span class="title">${ICONS.plus} new session</span>`;
+  return row;
+}
+
+function sessionBadges(session) {
+  const badges = [];
+  if (session.live || session.active || ["running", "thinking"].includes(session.status)) {
+    badges.push("live");
+  }
+  if (session.unreadCompleted || session.unread) {
+    badges.push("unread");
+  }
+  if (session.kind) {
+    badges.push(session.kind);
+  }
+  return badges;
+}
+
+function workspaceHasActiveSession(workspace) {
+  return (workspace.sessions || []).some((session) => session.active || session.live);
+}
+
+function workspaceSessionCount(workspace) {
+  return Number.isFinite(workspace.sessionCount) ? workspace.sessionCount : (workspace.sessions || []).length;
+}
+
+function orderedWorkspaces(workspaces) {
+  return applyStoredOrder(workspaces, readStoredList("pi.workspaceOrder"));
+}
+
+function orderedSessions(workspace) {
+  const orders = readStoredObject("pi.sessionOrder");
+  return applyStoredOrder(workspace.sessions || [], orders[workspace.id] || []);
+}
+
+function applyStoredOrder(items, order) {
+  const positions = new Map(order.map((id, index) => [id, index]));
+  return [...items].sort((left, right) => {
+    const leftIndex = positions.get(left.id);
+    const rightIndex = positions.get(right.id);
+    if (leftIndex === undefined && rightIndex === undefined) {
+      return 0;
+    }
+    if (leftIndex === undefined) {
+      return 1;
+    }
+    if (rightIndex === undefined) {
+      return -1;
+    }
+    return leftIndex - rightIndex;
+  });
+}
+
+function readStoredList(key) {
+  const value = readStoredValue(key);
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+
+function readStoredObject(key) {
+  const value = readStoredValue(key);
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function readStoredValue(key) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function movableSiblings(source) {

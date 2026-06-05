@@ -25,7 +25,7 @@ function setupApp() {
       </section>
     </pi-app>`;
   const app = document.querySelector("pi-app");
-  app.workspaceList = [{ id: "w1", name: "one", sessions: [] }];
+  app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
   app.renderSidebarWorkspacesCalls = [];
   app.renderSidebarWorkspaces = (workspaces) => app.renderSidebarWorkspacesCalls.push(workspaces);
   app.baseRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
@@ -80,15 +80,15 @@ describe("pi-web-sidebar plugin", () => {
     expect(pluginSidebar.querySelector(".sb-footer")).toBeFalsy();
     expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeFalsy();
     expect(app.querySelector("[data-native-sidebar]")).toBeFalsy();
-    expect(app.renderSidebarWorkspacesCalls).toEqual([[{ id: "w1", name: "one", sessions: [] }]]);
+    expect(pluginSidebar.querySelector("[data-workspace-group='w1'] .label").textContent).toBe("one");
+    expect(pluginSidebar.querySelector("[data-workspace-group='w1'] .ws-path").textContent).toBe("/one");
+    expect(app.renderSidebarWorkspacesCalls).toEqual([]);
+    expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
     expect(app.restoreSidebarCalls).toBe(1);
     expect(app.sidebarSortableCleanupCalls).toBe(1);
     expect(app.sidebarSortableUnmounted).toBe(true);
     expect(app.sidebarSortableRoot).toBeUndefined();
     expect(app.sidebarSortableRenderToken).toBeUndefined();
-    await Promise.resolve();
-    expect(app.renderSortableSidebarWorkspacesCalls).toHaveLength(1);
-    expect(app.renderSortableSidebarWorkspacesCalls[0].section).toBe(pluginSidebar.querySelector(".sb-section"));
   });
 
   test("dispose removes plugin sidebar and restores native sidebar", () => {
@@ -141,34 +141,23 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelectorAll("[data-native-sidebar]")).toHaveLength(1);
   });
 
-  test("sortable bridge reactivates drag after host workspace renders", async () => {
+  test("controller renders workspace changes without host sidebar renderers", () => {
     const app = setupApp();
     const controller = createSidebarController(app);
-    const nextWorkspaces = [{ id: "w2", name: "two", sessions: [] }];
 
     controller.mount();
-    await Promise.resolve();
-    app.renderSortableSidebarWorkspacesCalls = [];
-    app.renderSidebarWorkspaces(nextWorkspaces);
-    await Promise.resolve();
+    app.workspaceList = [{ id: "w2", name: "two", path: "/two", sessions: [] }];
+    controller.render();
 
-    expect(app.renderSidebarWorkspacesCalls.at(-1)).toBe(nextWorkspaces);
-    expect(app.renderSortableSidebarWorkspacesCalls).toHaveLength(1);
-    expect(app.renderSortableSidebarWorkspacesCalls[0].workspaces).toBe(nextWorkspaces);
+    expect(app.querySelector("[data-workspace-group='w1']")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w2'] .label").textContent).toBe("two");
+    expect(app.renderSidebarWorkspacesCalls).toEqual([]);
+    expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
   });
 
-  test("adds fallback grip handles to static host rows", async () => {
+  test("adds fallback grip handles to plugin-rendered rows", async () => {
     const app = setupApp();
-    app.renderSidebarWorkspaces = (workspaces) => {
-      app.renderSidebarWorkspacesCalls.push(workspaces);
-      const section = app.querySelector("[data-pi-web-sidebar-plugin] .sb-section");
-      section.insertAdjacentHTML("beforeend", `
-        <div class="workspace-group" data-workspace-group="w1">
-          <div class="workspace-shell"><button class="ws-row" type="button"><span class="label">one</span></button></div>
-          <div class="sessions"><div class="session-row" data-session="s1" data-workspace="w1"><button class="session-main" type="button"><span class="title">one</span></button></div></div>
-        </div>`);
-    };
-    app.baseRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
+    app.workspaceList = [{ id: "w1", name: "one", sessions: [{ id: "s1", title: "one" }] }];
     const controller = createSidebarController(app);
 
     controller.mount();
@@ -183,23 +172,11 @@ describe("pi-web-sidebar plugin", () => {
 
   test("fallback drag previews workspace and session moves before drop", async () => {
     const app = setupApp();
-    app.renderSidebarWorkspaces = (workspaces) => {
-      app.renderSidebarWorkspacesCalls.push(workspaces);
-      const section = app.querySelector("[data-pi-web-sidebar-plugin] .sb-section");
-      section.insertAdjacentHTML("beforeend", `
-        <div class="workspace-group" data-workspace-group="w1">
-          <div class="workspace-shell"><button class="ws-row" type="button"><span class="label">one</span></button></div>
-          <div class="sessions">
-            <div class="session-row" data-session="s1" data-workspace="w1"><button class="session-main" type="button"><span class="title">one</span></button></div>
-            <div class="session-row" data-session="s2" data-workspace="w1"><button class="session-main" type="button"><span class="title">two</span></button></div>
-          </div>
-        </div>
-        <div class="workspace-group" data-workspace-group="w2">
-          <div class="workspace-shell"><button class="ws-row" type="button"><span class="label">two</span></button></div>
-          <div class="sessions"></div>
-        </div>`);
-    };
-    app.baseRenderSidebarWorkspaces = app.renderSidebarWorkspaces;
+    app.workspaceList = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", title: "one" }, { id: "s2", title: "two" }] },
+      { id: "w2", name: "two", sessions: [] },
+    ];
+    app.sidebarOpenWorkspaceId = "w1";
     const controller = createSidebarController(app);
 
     controller.mount();
@@ -227,7 +204,8 @@ describe("pi-web-sidebar plugin", () => {
     expect([...app.querySelectorAll(".workspace-group")].map((group) => group.dataset.workspaceGroup)).toEqual(["w2", "w1"]);
     expect(app.reorderWorkspacesCalls.at(-1)).toEqual(["w2", "w1"]);
     expect(animated).toContain("w1");
-    expect([...app.querySelectorAll(".workspace-group > .sessions")].some((sessions) => sessions.hidden)).toBe(false);
+    expect(app.querySelector("[data-workspace-group='w1'] > .sessions").hidden).toBe(false);
+    expect(app.querySelector("[data-workspace-group='w2'] > .sessions").hidden).toBe(true);
 
     const sessionHandle = app.querySelector("[data-session='s1'] .session-drag-handle");
     const sessionTarget = app.querySelector("[data-session='s2']");
