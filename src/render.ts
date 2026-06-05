@@ -15,12 +15,24 @@ export function renderPluginWorkspaceList(
   }
 
   section
-    .querySelectorAll(":scope > .workspace-group, :scope > [data-sortable-workspaces]")
+    .querySelectorAll(":scope > .workspace-group, :scope > .workspace-empty, :scope > [data-sortable-workspaces]")
     .forEach((node: Element): void => node.remove());
+
+  if (workspaces.length === 0) {
+    section.append(createEmptyWorkspaceState());
+    return;
+  }
 
   for (const workspace of orderedWorkspaces(workspaces)) {
     section.append(createPluginWorkspaceGroup(workspace, app));
   }
+}
+
+function createEmptyWorkspaceState(): HTMLElement {
+  const empty: HTMLDivElement = document.createElement("div");
+  empty.className = "workspace-empty";
+  empty.textContent = "no workspaces yet · press open to add one";
+  return empty;
 }
 
 export function markSelectedSession(row: HTMLElement, app: AppElement): void {

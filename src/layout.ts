@@ -32,13 +32,30 @@ export function collapseSidebarLayout(app: AppElement, collapsed: boolean): void
   app.dataset.sidebar = collapsed ? "collapsed" : "open";
   app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)?.toggleAttribute("hidden", collapsed);
 
-  const expand: HTMLElement | null = app.querySelector(".sb-expand-btn");
-  if (expand) {
-    expand.style.display = collapsed ? "inline-flex" : "none";
-  }
+  const expand: HTMLElement = ensureSidebarExpandButton(app);
+  expand.style.display = collapsed ? "inline-flex" : "none";
 
   storeString(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
   applySidebarGrid(app);
+}
+
+function ensureSidebarExpandButton(app: AppElement): HTMLElement {
+  const existing: HTMLElement | null = app.querySelector(".sb-expand-btn");
+
+  if (existing) {
+    return existing;
+  }
+
+  const expand: HTMLButtonElement = document.createElement("button");
+  expand.type = "button";
+  expand.className = "sb-expand-btn";
+  expand.setAttribute("aria-label", "expand sidebar");
+  expand.title = "expand sidebar";
+  expand.textContent = "›";
+  expand.style.display = "none";
+  expand.addEventListener("click", (): void => collapseSidebarLayout(app, false));
+  app.append(expand);
+  return expand;
 }
 
 export function applySidebarGrid(app: AppElement, width: number = Number(app.dataset.sidebarWidth || 280)): void {
