@@ -66,17 +66,51 @@ console.log(
 );
 
 function changedExecutableSourceLines() {
-  const diff = spawnSync("git", ["diff", "--unified=0", "HEAD", "--", "src/**/*.ts"], { encoding: "utf8" });
+  const result = new Map();
 
-  if (diff.status !== 0) {
-    throw new Error(diff.stderr || "failed to read git diff");
+  for (const diffText of changedSourceDiffs()) {
+    addDiffExecutableLines(result, diffText);
   }
 
-  const result = new Map();
+  return result;
+}
+
+function changedSourceDiffs() {
+  const diffs = [];
+  const base = coverageBaseRef();
+
+  if (base) {
+    diffs.push(gitDiff(["diff", "--unified=0", `${base}...HEAD`, "--", "src/**/*.ts"]));
+  }
+
+  diffs.push(gitDiff(["diff", "--unified=0", "HEAD", "--", "src/**/*.ts"]));
+  return diffs;
+}
+
+function coverageBaseRef() {
+  if (process.env.COVERAGE_BASE_REF) {
+    return process.env.COVERAGE_BASE_REF;
+  }
+
+  const mergeBase = spawnSync("git", ["merge-base", "origin/main", "HEAD"], { encoding: "utf8" });
+  return mergeBase.status === 0 ? mergeBase.stdout.trim() : "";
+}
+
+function gitDiff(args) {
+  const diff = spawnSync("git", args, { encoding: "utf8" });
+
+  if (diff.status !== 0) {
+    throw new Error(diff.stderr || `failed to run git ${args.join(" ")}`);
+  }
+
+  return diff.stdout;
+}
+
+function addDiffExecutableLines(result, diffText) {
   let file = "";
   let nextLine = 0;
 
-  for (const line of diff.stdout.split("\n")) {
+  for (const line of diffText.split("\n")) {
     const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
 
     if (fileMatch) {
@@ -115,7 +149,6 @@ function changedExecutableSourceLines() {
     }
   }
 
-  return result;
 }
 
 function addUntrackedSourceLines(result) {
