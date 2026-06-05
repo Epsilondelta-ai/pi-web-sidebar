@@ -9,6 +9,9 @@ const ICONS = {
   refresh: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>',
   collapse: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>',
   grip: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>',
+  ellipsis: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>',
+  pencil: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>',
+  trash: '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
 };
 
 export default function activate(context) {
@@ -260,12 +263,29 @@ function bindWorkspaceActions(wrap, app, context, refreshWorkspaces) {
     }
 
     const action = target.dataset.action || (target.dataset.session ? "pick-session" : "");
+    const stopsHostAction = shouldHandleActionInsidePlugin(action);
+    if (stopsHostAction) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
     if (await handleWorkspaceAction(action, target, app, context, refreshWorkspaces)) {
       event.preventDefault();
       event.stopPropagation();
     }
   });
   wrap.dataset.piWebSidebarWorkspaceActionsBound = "true";
+}
+
+function shouldHandleActionInsidePlugin(action) {
+  return [
+    "refresh-workspaces",
+    "toggle-workspace",
+    "delete-workspace",
+    "new-session",
+    "delete-workspace-sessions",
+    "collapse-sidebar",
+  ].includes(action);
 }
 
 async function handleWorkspaceAction(action, target, app, context, refreshWorkspaces) {
@@ -293,7 +313,12 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
   }
 
   if (action === "new-session") {
-    await createWorkspaceSession(context, target.dataset.workspace);
+    if (typeof app.newSession === "function") {
+      await app.newSession(target.dataset.workspace);
+    } else {
+      await createWorkspaceSession(context, target.dataset.workspace);
+    }
+
     await refreshWorkspaces();
     return true;
   }
@@ -467,35 +492,65 @@ function createSessionsList(workspace, app, open) {
 }
 
 function createPluginSessionRow(session, workspace, app) {
-  const row = document.createElement("button");
-  row.type = "button";
+  const selected = session.id === app.dataset.activeSessionId;
+  const titleText = session.title || session.name || session.id;
+  const row = document.createElement("div");
   row.className = [
     "session-row",
-    session.id === app.dataset.activeSessionId && "active",
+    selected && "active",
+    selected && "selected",
     session.parentId && "child-session",
   ].filter(Boolean).join(" ");
-  row.dataset.action = "pick-session";
   row.dataset.session = session.id;
   row.dataset.workspace = workspace.id;
-  row.dataset.title = session.title || session.name || session.id;
-  row.setAttribute("aria-current", session.id === app.dataset.activeSessionId ? "true" : "false");
+  row.dataset.title = titleText;
+  row.dataset.lastUsed = session.lastUsed || "";
+  if (session.parentId) {
+    row.dataset.parentSession = session.parentId;
+  }
+  row.setAttribute("aria-current", selected ? "true" : "false");
 
-  const main = document.createElement("span");
+  const main = document.createElement("button");
+  main.type = "button";
   main.className = "session-main";
+  main.dataset.session = session.id;
+  main.dataset.workspace = workspace.id;
+  main.dataset.title = titleText;
+
   const title = document.createElement("span");
   title.className = "title";
-  title.textContent = session.title || session.name || session.id;
+  title.textContent = titleText;
   main.append(title);
 
-  const badges = sessionBadges(session);
-  if (badges.length) {
-    const meta = document.createElement("span");
-    meta.className = "session-meta";
-    meta.textContent = badges.join(" · ");
-    main.append(meta);
-  }
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  meta.textContent = sessionBadges(session).join(" · ");
+  meta.hidden = !meta.textContent;
+  meta.classList.toggle("live", !!(session.live || session.active));
+  main.append(meta);
 
-  row.append(main);
+  const menuId = `session-menu-${String(session.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const menuButton = document.createElement("button");
+  menuButton.type = "button";
+  menuButton.className = "session-menu-button";
+  menuButton.dataset.action = "session-menu-toggle";
+  menuButton.setAttribute("aria-haspopup", "true");
+  menuButton.setAttribute("aria-expanded", "false");
+  menuButton.setAttribute("aria-controls", menuId);
+  menuButton.setAttribute("aria-label", "session actions");
+  menuButton.innerHTML = ICONS.ellipsis;
+
+  const menu = document.createElement("div");
+  menu.className = "session-menu";
+  menu.id = menuId;
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menu.innerHTML = [
+    `<button type="button" role="menuitem" data-action="rename-session">${ICONS.pencil}<span>rename</span></button>`,
+    `<button type="button" role="menuitem" class="danger" data-action="delete-session">${ICONS.trash}<span>delete</span></button>`,
+  ].join("");
+
+  row.append(main, menuButton, menu);
   return row;
 }
 
