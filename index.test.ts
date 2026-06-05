@@ -6,6 +6,7 @@ import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, Subscrip
 type ApiCall = { path: string; options: RequestInit };
 type BackendCallLog = { method: string; options: { workspaceId?: string; data?: Record<string, unknown> } };
 type DragOptions = { clientY?: number };
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
 type TestApp = AppElement & {
   testWorkspaces: SidebarWorkspace[];
   renderSidebarWorkspacesCalls: SidebarWorkspace[][];
@@ -166,6 +167,19 @@ function dragEvent(type: string, options: DragOptions = {}): Event {
   };
   Object.defineProperty(event, "clientY", { value: options.clientY || 0 });
   return event;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolveDeferred: ((value: T) => void) | undefined;
+  const promise: Promise<T> = new Promise((resolve: (value: T) => void): void => {
+    resolveDeferred = resolve;
+  });
+
+  if (!resolveDeferred) {
+    throw new Error("deferred resolver was not initialized");
+  }
+
+  return { promise, resolve: resolveDeferred };
 }
 
 describe("pi-web-sidebar plugin", () => {
@@ -341,6 +355,86 @@ describe("pi-web-sidebar plugin", () => {
     expect(hostNewSessionCalls).toBe(0);
     expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
+  });
+
+  test("ignores stale refreshes so session mutations cannot empty the plugin sidebar", async () => {
+    const app = setupApp();
+    const workspaceRequests: Deferred<{ workspaces: SidebarWorkspace[] }>[] = [];
+    const context = testContext(app, {
+      async apiRequest(path: string, options: RequestInit = {}): Promise<unknown> {
+        context.apiCalls.push({ path, options });
+
+        if (path === "/api/workspaces") {
+          const request: Deferred<{ workspaces: SidebarWorkspace[] }> = deferred();
+          workspaceRequests.push(request);
+          return request.promise;
+        }
+
+        if (path === "/api/workspaces/w1/sessions" && options.method === "POST") {
+          return { session: { id: "s1", title: "new session" } };
+        }
+
+        return {};
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(workspaceRequests).toHaveLength(2);
+    workspaceRequests[1].resolve({
+      workspaces: [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    workspaceRequests[0].resolve({ workspaces: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
+    expect(app.querySelector("[data-session='s1'] .session-drag-handle")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle")).toBeTruthy();
+  });
+
+  test("session menu delete keeps the current workspace list when refresh returns transient empty", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    const context = testContext(app, {
+      async apiRequest(path: string, options: RequestInit = {}): Promise<unknown> {
+        context.apiCalls.push({ path, options });
+
+        if (path === "/api/sessions/s1" && options.method === "DELETE") {
+          return {};
+        }
+
+        if (path === "/api/workspaces") {
+          return { workspaces: [] };
+        }
+
+        return {};
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await Promise.resolve();
+    app.querySelector("[data-session='s1'] [data-action='session-menu-toggle']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    app.querySelector("[data-session='s1'] [data-action='delete-session']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle")).toBeTruthy();
+    expect(app.querySelector("[data-session='s1'] .session-drag-handle")).toBeTruthy();
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {
