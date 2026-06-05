@@ -229,6 +229,48 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
   });
 
+  test("session menu delete is handled by plugin without blanking sidebar", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    let hostDeleteClicks = 0;
+    const context = testContext(app, {
+      async apiRequest(path, options = {}) {
+        context.apiCalls.push({ path, options });
+        if (path === "/api/sessions/s1" && options.method === "DELETE") {
+          app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
+          return {};
+        }
+        if (path === "/api/workspaces") {
+          return { workspaces: app.testWorkspaces };
+        }
+        return {};
+      },
+    });
+    app.addEventListener("click", (event) => {
+      if (event.target.closest("[data-action='delete-session']")) {
+        hostDeleteClicks += 1;
+        app.querySelector(".sb-section")?.replaceChildren();
+      }
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-session='s1'] [data-action='session-menu-toggle']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(app.querySelector("[data-session='s1'] .session-menu").hidden).toBe(false);
+    app.querySelector("[data-session='s1'] [data-action='delete-session']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(context.apiCalls).toContainEqual({ path: "/api/sessions/s1", options: { method: "DELETE" } });
+    expect(hostDeleteClicks).toBe(0);
+    expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
+    expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
+  });
+
   test("fallback drag previews workspace and session moves before drop", async () => {
     const app = setupApp();
     app.testWorkspaces = [

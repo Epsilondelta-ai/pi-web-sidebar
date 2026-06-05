@@ -285,6 +285,9 @@ function shouldHandleActionInsidePlugin(action) {
     "new-session",
     "delete-workspace-sessions",
     "collapse-sidebar",
+    "session-menu-toggle",
+    "rename-session",
+    "delete-session",
   ].includes(action);
 }
 
@@ -334,6 +337,22 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
     return true;
   }
 
+  if (action === "session-menu-toggle") {
+    toggleSessionMenu(target.closest(".session-row"), app);
+    return true;
+  }
+
+  if (action === "rename-session") {
+    await renameSidebarSession(context, target.closest(".session-row"));
+    return true;
+  }
+
+  if (action === "delete-session") {
+    await deleteSidebarSession(context, app, target.closest(".session-row"));
+    await refreshWorkspaces();
+    return true;
+  }
+
   if (action === "pick-session") {
     markSelectedSession(target, app);
     routeWorkspace(app);
@@ -343,11 +362,79 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
   return false;
 }
 
-function markSelectedSession(row, app) {
-  app.querySelectorAll(`[${PLUGIN_PANEL_ATTR}] .session-row.active`).forEach((session) => {
-    session.classList.remove("active");
+function toggleSessionMenu(row, app) {
+  if (!row) {
+    return;
+  }
+
+  const menu = row.querySelector(".session-menu");
+  const button = row.querySelector(".session-menu-button");
+  const open = !!menu?.hidden;
+  closeSessionMenus(app, row);
+  menu?.toggleAttribute("hidden", !open);
+  button?.setAttribute("aria-expanded", String(open));
+}
+
+function closeSessionMenus(app, except) {
+  app.querySelectorAll(`[${PLUGIN_PANEL_ATTR}] .session-row`).forEach((row) => {
+    if (except && row === except) {
+      return;
+    }
+
+    row.querySelector(".session-menu")?.setAttribute("hidden", "");
+    row.querySelector(".session-menu-button")?.setAttribute("aria-expanded", "false");
   });
-  row.classList.add("active");
+}
+
+async function renameSidebarSession(context, row) {
+  const sessionId = row?.dataset.session;
+  if (!sessionId) {
+    return;
+  }
+
+  const title = prompt("Rename session", row.dataset.title || "")?.trim();
+  if (!title) {
+    return;
+  }
+
+  const result = await renameSessionById(context, sessionId, title);
+  const nextTitle = result?.session?.title || title;
+  row.dataset.title = nextTitle;
+  const main = row.querySelector(".session-main");
+  if (main) {
+    main.dataset.title = nextTitle;
+  }
+
+  const label = row.querySelector(".title");
+  if (label) {
+    label.textContent = nextTitle;
+  }
+}
+
+async function deleteSidebarSession(context, app, row) {
+  const sessionId = row?.dataset.session;
+  if (!sessionId) {
+    return;
+  }
+
+  closeSessionMenus(app);
+  if (!confirm(`Delete session ${sessionId}? This removes the local JSONL file.`)) {
+    return;
+  }
+
+  await deleteSessionById(context, sessionId);
+  if (app.dataset.activeSessionId === sessionId && typeof app.clearActiveSession === "function") {
+    app.clearActiveSession(sessionId);
+  }
+}
+
+function markSelectedSession(row, app) {
+  app.querySelectorAll(`[${PLUGIN_PANEL_ATTR}] .session-row.active, [${PLUGIN_PANEL_ATTR}] .session-row.selected`).forEach((session) => {
+    session.classList.remove("active", "selected");
+    session.setAttribute("aria-current", "false");
+  });
+  row.classList.add("active", "selected");
+  row.setAttribute("aria-current", "true");
 }
 
 function toggleWorkspaceGroup(app, workspaceId) {
@@ -1046,6 +1133,17 @@ function deleteWorkspaceSessionList(context, workspaceId) {
   }
 
   return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`, { method: "DELETE" });
+}
+
+function renameSessionById(context, sessionId, title) {
+  return requestPiWeb(context, `/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+function deleteSessionById(context, sessionId) {
+  return requestPiWeb(context, `/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 }
 
 async function requestPiWeb(context, path, options = {}) {
