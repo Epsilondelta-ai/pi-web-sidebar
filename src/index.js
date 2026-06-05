@@ -316,12 +316,7 @@ async function handleWorkspaceAction(action, target, app, context, refreshWorksp
   }
 
   if (action === "new-session") {
-    if (typeof app.newSession === "function") {
-      await app.newSession(target.dataset.workspace);
-    } else {
-      await createWorkspaceSession(context, target.dataset.workspace);
-    }
-
+    await createWorkspaceSession(context, target.dataset.workspace);
     await refreshWorkspaces();
     return true;
   }
@@ -423,8 +418,8 @@ async function deleteSidebarSession(context, app, row) {
   }
 
   await deleteSessionById(context, sessionId);
-  if (app.dataset.activeSessionId === sessionId && typeof app.clearActiveSession === "function") {
-    app.clearActiveSession(sessionId);
+  if (app.dataset.activeSessionId === sessionId) {
+    app.dataset.activeSessionId = "";
   }
 }
 

@@ -195,6 +195,11 @@ describe("pi-web-sidebar plugin", () => {
   test("new session click is handled once and renders session actions without full refresh", async () => {
     const app = setupApp();
     let hostNewSessionClicks = 0;
+    let hostNewSessionCalls = 0;
+    app.newSession = async () => {
+      hostNewSessionCalls += 1;
+      app.querySelector(".sb-section")?.replaceChildren();
+    };
     const context = testContext(app, {
       async apiRequest(path, options = {}) {
         context.apiCalls.push({ path, options });
@@ -225,14 +230,21 @@ describe("pi-web-sidebar plugin", () => {
     const createCalls = context.apiCalls.filter((call) => call.path === "/api/workspaces/w1/sessions");
     expect(createCalls).toHaveLength(1);
     expect(hostNewSessionClicks).toBe(0);
+    expect(hostNewSessionCalls).toBe(0);
     expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {
     const app = setupApp();
+    app.dataset.activeSessionId = "s1";
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
     let hostDeleteClicks = 0;
+    let clearActiveSessionCalls = 0;
+    app.clearActiveSession = () => {
+      clearActiveSessionCalls += 1;
+      app.querySelector(".sb-section")?.replaceChildren();
+    };
     const context = testContext(app, {
       async apiRequest(path, options = {}) {
         context.apiCalls.push({ path, options });
@@ -266,6 +278,8 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(context.apiCalls).toContainEqual({ path: "/api/sessions/s1", options: { method: "DELETE" } });
     expect(hostDeleteClicks).toBe(0);
+    expect(clearActiveSessionCalls).toBe(0);
+    expect(app.dataset.activeSessionId).toBe("");
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
