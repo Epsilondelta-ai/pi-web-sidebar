@@ -29,7 +29,8 @@ function setModelQuotaFooter(ctx: ExtensionContext): void {
           quotaText,
           getGitBranchText(footerData),
         ].filter(Boolean);
-        return [theme.fg("accent", truncateToWidth(parts.join(" | "), width))];
+        const text = truncateToWidth(parts.join(" | "), width);
+        return [theme.fg("accent", centerToWidth(text, width))];
       },
     };
   });
@@ -57,6 +58,15 @@ function normalizeModelName(raw: string): string {
     .replace(/\bkimi\b/gi, "Kimi")
     .replace(/\bclaude\b/gi, "Claude")
     .replace(/\bcodex\b/gi, "Codex");
+}
+
+function centerToWidth(value: string, width: number): string {
+  if (width <= 0) return "";
+  const chars = Array.from(value);
+  const padding = Math.max(0, width - chars.length);
+  const left = Math.floor(padding / 2);
+  const right = padding - left;
+  return `${" ".repeat(left)}${value}${" ".repeat(right)}`;
 }
 
 function truncateToWidth(value: string, width: number): string {
