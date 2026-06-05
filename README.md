@@ -36,7 +36,8 @@ not wrap or call pi-web's sidebar workspace renderers. On deactivation it restor
 
 The `+ open` button is implemented inside this plugin: frontend opens a custom folder picker, calls `backend.js` with
 `list-folders`, `create-folder`, or `clone-workspace`, `backend.js` executes the prebuilt Go binary, then the frontend
-opens the selected path through `app.openWorkspacePath()`.
+opens the selected path through pi-web's HTTP workspace API. Workspace refresh, create/delete session, delete workspace,
+sidebar resize/collapse, and reorder persistence are handled by this plugin without calling host app methods.
 
 Rebuild backend binaries with:
 
