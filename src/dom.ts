@@ -36,7 +36,7 @@ export function installFallbackDragStyles(): void {
 }
 
 export function cssEscape(value: string): string {
-  if (globalThis.CSS?.escape) {
+  if (typeof globalThis.CSS?.escape === "function") {
     return CSS.escape(value);
   }
 

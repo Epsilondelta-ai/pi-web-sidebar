@@ -57,18 +57,27 @@ export function applySidebarGrid(app: AppElement, width: number = Number(app.dat
   body.style.gridTemplateColumns = collapsed ? collapsedColumns : expandedColumns;
 }
 
-export function bindResizer(wrap: HTMLElement, app: AppElement, sidebarBridge: SidebarBridge): void {
+export function bindResizer(wrap: HTMLElement, app: AppElement, sidebarBridge: SidebarBridge): () => void {
   const resizer: HTMLElement | null = wrap.querySelector(".sb-resizer");
+  let activeCleanup: (() => void) | undefined;
 
   if (!resizer || resizer.dataset.piWebSidebarResizeBound === "true") {
-    return;
+    return (): void => undefined;
   }
 
-  resizer.addEventListener("pointerdown", (event: PointerEvent): void => startSidebarResize(app, event, sidebarBridge));
+  resizer.addEventListener("pointerdown", (event: PointerEvent): void => {
+    activeCleanup?.();
+    activeCleanup = startSidebarResize(app, event, sidebarBridge);
+  });
   resizer.dataset.piWebSidebarResizeBound = "true";
+
+  return (): void => {
+    activeCleanup?.();
+    activeCleanup = undefined;
+  };
 }
 
-function startSidebarResize(app: AppElement, event: PointerEvent, sidebarBridge: SidebarBridge): void {
+function startSidebarResize(app: AppElement, event: PointerEvent, sidebarBridge: SidebarBridge): () => void {
   event.preventDefault();
   const startX: number = event.clientX;
   const startWidth: number = Number(app.dataset.sidebarWidth || 280);
@@ -80,14 +89,18 @@ function startSidebarResize(app: AppElement, event: PointerEvent, sidebarBridge:
     sidebarBridge.emitState("resize-sidebar");
   };
   const stopResize = (): void => {
+    cleanup();
     const width: number = Number(app.dataset.sidebarWidth || startWidth);
     storeSidebarWidth(width);
     sidebarBridge.emitEvent("resize-sidebar", { width });
+  };
+  const cleanup = (): void => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", stopResize);
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", stopResize);
+  return cleanup;
 }
 
 function readStoredSidebarWidth(): number | undefined {

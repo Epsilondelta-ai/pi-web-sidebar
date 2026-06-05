@@ -10,7 +10,7 @@ The plugin mounts and renders its own workspace/session sidebar as a direct chil
 - Workspace open, refresh, remove, and drag reorder support.
 - The `+ open` flow uses this plugin's own backend-powered folder browser instead of pi-web's route picker.
 - Session list with active/live state, hierarchy, badges, selection, creation, deletion, and drag reorder support.
-- Sidebar collapse/expand, resize persistence, mobile drawer compatibility, settings entry, and update notice entry.
+- Sidebar collapse/expand, resize persistence, and mobile drawer compatibility.
 
 ## Install in pi-web
 
@@ -27,7 +27,7 @@ Use pi-web settings → Plugins → local path, then install this plugin folder.
 - `tsconfig.json` — TypeScript typecheck configuration.
 - `backend.go` — Go backend implementation for the custom workspace folder browser.
 - `backend.js` — Node wrapper that executes the prebuilt Go backend binary.
-- `bin/<os>-<arch>/pi-web-sidebar-backend` — prebuilt backend binary.
+- `bin/<os>-<arch>/pi-web-sidebar-backend` — prebuilt backend binary for Linux/macOS on amd64/arm64.
 
 ## Notes
 
@@ -37,8 +37,10 @@ not wrap or call pi-web's sidebar workspace renderers. On deactivation it restor
 
 The `+ open` button is implemented inside this plugin: frontend opens a custom folder picker, calls `backend.js` with
 `list-folders`, `create-folder`, or `clone-workspace`, `backend.js` executes the prebuilt Go binary, then the frontend
-opens the selected path through pi-web's HTTP workspace API. Workspace refresh, create/delete session, delete workspace,
-sidebar resize/collapse, and reorder persistence are handled by this plugin without calling host app methods.
+opens the selected path through pi-web's HTTP workspace API. The backend wrapper currently supports Linux/macOS on
+amd64/arm64; unsupported platforms fail fast with the expected binary path. Workspace refresh, create/delete session,
+delete workspace, sidebar resize/collapse, and reorder persistence are handled by this plugin without calling host app
+methods.
 
 When pi-web provides `context.rxjs`, the plugin exposes `app.piWebSidebar` as an explicit cross-plugin bridge:
 `state$` is a `BehaviorSubject` with the latest sidebar snapshot, and `events$` is a `Subject` for sidebar actions.

@@ -75,7 +75,17 @@ export async function requestPiWeb(context: PluginContext, path: string, options
     throw new Error(await responseErrorMessage(response));
   }
 
-  return response.json() as Promise<unknown>;
+  if (response.status === 204) {
+    return {};
+  }
+
+  const body: string = await response.text();
+
+  if (!body.trim()) {
+    return {};
+  }
+
+  return JSON.parse(body) as unknown;
 }
 
 export async function loadFolders(context: PluginContext, path: string): Promise<FolderListing> {

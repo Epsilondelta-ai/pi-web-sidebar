@@ -23,7 +23,7 @@ export function pickerMarkup(): string {
     "</style>",
     '<section class="pi-sidebar-picker-dialog" role="dialog" aria-modal="true" aria-label="open workspace">',
     '<div class="pi-sidebar-picker-head"><strong>open workspace</strong><button type="button" data-picker-action="close">close</button></div>',
-    '<form class="pi-sidebar-picker-path" data-picker-path-form><input name="path" autocomplete="off" spellcheck="false"><button type="submit">go</button></form>',
+    '<form class="pi-sidebar-picker-path" data-picker-path-form><input name="path" aria-label="workspace path" aria-describedby="pi-sidebar-picker-error" autocomplete="off" spellcheck="false"><button type="submit">go</button></form>',
     '<div class="pi-sidebar-picker-list" data-picker-list></div>',
     pickerActionsMarkup(),
     "</section>",
@@ -34,7 +34,7 @@ export function pickerMarkup(): string {
 
 function pickerActionsMarkup(): string {
   return [
-    '<div class="pi-sidebar-picker-actions"><span class="pi-sidebar-picker-error" data-picker-error></span><span>',
+    '<div class="pi-sidebar-picker-actions"><span id="pi-sidebar-picker-error" class="pi-sidebar-picker-error" data-picker-error role="status" aria-live="polite"></span><span>',
     '<button type="button" data-picker-action="new-folder">new folder</button> ',
     '<button type="button" data-picker-action="clone">clone</button> ',
     '<button type="button" data-picker-action="refresh">refresh</button> ',
@@ -45,7 +45,7 @@ function pickerActionsMarkup(): string {
 
 function folderDialogMarkup(): string {
   return [
-    "<div data-new-folder-dialog hidden>",
+    '<div data-new-folder-dialog hidden role="dialog" aria-modal="true" aria-label="new folder">',
     '<form class="pi-sidebar-form-dialog" data-new-folder-form><strong>new folder</strong>',
     '<label>folder name<input name="name" autocomplete="off" spellcheck="false" required></label>',
     '<div class="pi-sidebar-form-actions">',
@@ -57,7 +57,7 @@ function folderDialogMarkup(): string {
 
 function cloneDialogMarkup(): string {
   return [
-    "<div data-clone-dialog hidden>",
+    '<div data-clone-dialog hidden role="dialog" aria-modal="true" aria-label="clone repository">',
     '<form class="pi-sidebar-form-dialog" data-clone-form><strong>clone repository</strong>',
     '<label>git url<input name="gitUrl" autocomplete="off" spellcheck="false" placeholder="https://github.com/user/repo.git" required></label>',
     '<label>folder name <input name="name" autocomplete="off" spellcheck="false" placeholder="optional"></label>',

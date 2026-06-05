@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Window as HappyWindow } from "happy-dom";
 import { createSidebarController } from "./src/index";
+import { requestPiWeb } from "./src/api";
 import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, SubscriptionLike } from "./src/types";
 
 type ApiCall = { path: string; options: RequestInit };
@@ -41,11 +42,11 @@ let windowRef: HappyWindow | undefined;
 afterEach(() => {
   windowRef?.happyDOM?.close();
   windowRef = undefined;
-  delete globalThis.window;
-  delete globalThis.document;
-  delete globalThis.prompt;
-  delete globalThis.confirm;
-  delete globalThis.localStorage;
+  globalThis.window = undefined as unknown as Window & typeof globalThis;
+  globalThis.document = undefined as unknown as Document;
+  globalThis.prompt = undefined as unknown as typeof prompt;
+  globalThis.confirm = undefined as unknown as typeof confirm;
+  globalThis.localStorage = undefined as unknown as Storage;
 });
 
 function setupApp(): TestApp {
@@ -169,6 +170,16 @@ function dragEvent(type: string, options: DragOptions = {}): Event {
   return event;
 }
 
+function requireElement<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
+  const element: T | null = root.querySelector<T>(selector);
+
+  if (!element) {
+    throw new Error(`missing element: ${selector}`);
+  }
+
+  return element;
+}
+
 function deferred<T>(): Deferred<T> {
   let resolveDeferred: ((value: T) => void) | undefined;
   const promise: Promise<T> = new Promise((resolve: (value: T) => void): void => {
@@ -189,8 +200,13 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
 
-    const body = app.querySelector(".app-body");
+    const body = requireElement(app, ".app-body");
     const pluginSidebar = body.firstElementChild;
+
+    if (!(pluginSidebar instanceof window.HTMLElement)) {
+      throw new Error("plugin sidebar not mounted");
+    }
+
     expect(pluginSidebar.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
     expect(pluginSidebar.querySelector("[data-action='refresh-workspaces']")).toBeTruthy();
     expect(pluginSidebar.querySelector("[data-pi-web-sidebar-action='open-workspace']")).toBeTruthy();
@@ -198,8 +214,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(pluginSidebar.querySelector(".sb-footer")).toBeFalsy();
     expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeFalsy();
     expect(app.querySelector("[data-native-sidebar]")).toBeFalsy();
-    expect(pluginSidebar.querySelector("[data-workspace-group='w1'] .label").textContent).toBe("one");
-    expect(pluginSidebar.querySelector("[data-workspace-group='w1'] .ws-path").textContent).toBe("/one");
+    expect(requireElement(pluginSidebar, "[data-workspace-group='w1'] .label").textContent).toBe("one");
+    expect(requireElement(pluginSidebar, "[data-workspace-group='w1'] .ws-path").textContent).toBe("/one");
     expect(app.renderSidebarWorkspacesCalls).toEqual([]);
     expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
     expect(app.restoreSidebarCalls).toBe(0);
@@ -233,18 +249,18 @@ describe("pi-web-sidebar plugin", () => {
     app.dataset.sidebar = "collapsed";
     controller.dispose();
 
-    expect(app.querySelector("[data-native-sidebar]").hidden).toBe(true);
+    expect(requireElement<HTMLElement>(app, "[data-native-sidebar]").hidden).toBe(true);
   });
 
   test("mounts without a native sidebar", () => {
     const app = setupApp();
-    app.querySelector("[data-native-sidebar]").remove();
+    app.querySelector("[data-native-sidebar]")?.remove();
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeTruthy();
-    expect(app.querySelector(".app-body").firstElementChild.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+    expect(requireElement(app, ".app-body").firstElementChild?.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
   });
 
   test("mount and dispose are idempotent", () => {
@@ -267,7 +283,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
     expect(app.querySelector("[data-workspace-group='w1']")).toBeFalsy();
-    expect(app.querySelector("[data-workspace-group='w2'] .label").textContent).toBe("two");
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w2'] .label").textContent).toBe("two");
     expect(app.renderSidebarWorkspacesCalls).toEqual([]);
     expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
   });
@@ -280,13 +296,19 @@ describe("pi-web-sidebar plugin", () => {
     const events: import("./src/types").SidebarActionEvent[] = [];
 
     controller.mount();
-    const stateSubscription = app.piWebSidebar.state$.subscribe((state) => states.push(state));
-    const eventSubscription = app.piWebSidebar.events$.subscribe((event) => events.push(event));
+    const sidebarApi = app.piWebSidebar;
+
+    if (!sidebarApi) {
+      throw new Error("sidebar api not mounted");
+    }
+
+    const stateSubscription = sidebarApi.state$.subscribe((state) => states.push(state));
+    const eventSubscription = sidebarApi.events$.subscribe((event) => events.push(event));
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
-    expect(app.piWebSidebar.getSnapshot().workspaceCount).toBe(1);
-    expect(app.piWebSidebar.getSnapshot().sessionCount).toBe(0);
-    expect(states.at(-1).workspaces[0].id).toBe("w2");
+    expect(sidebarApi.getSnapshot().workspaceCount).toBe(1);
+    expect(sidebarApi.getSnapshot().sessionCount).toBe(0);
+    expect(states.at(-1)?.workspaces[0]?.id).toBe("w2");
     expect(events.some((event) => event.type === "state" && event.reason === "render-workspaces")).toBe(true);
 
     controller.dispose();
@@ -336,14 +358,14 @@ describe("pi-web-sidebar plugin", () => {
       },
     });
     app.addEventListener("click", (event) => {
-      if (event.target.closest("[data-action='new-session']")) {
+      if ((event.target as Element | null)?.closest("[data-action='new-session']")) {
         hostNewSessionClicks += 1;
       }
     });
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -380,7 +402,7 @@ describe("pi-web-sidebar plugin", () => {
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -424,9 +446,9 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
     await Promise.resolve();
-    app.querySelector("[data-session='s1'] [data-action='session-menu-toggle']")
+    requireElement(app, "[data-session='s1'] [data-action='session-menu-toggle']")
       .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
-    app.querySelector("[data-session='s1'] [data-action='delete-session']")
+    requireElement(app, "[data-session='s1'] [data-action='delete-session']")
       .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
@@ -461,7 +483,7 @@ describe("pi-web-sidebar plugin", () => {
       },
     });
     app.addEventListener("click", (event) => {
-      if (event.target.closest("[data-action='delete-session']")) {
+      if ((event.target as Element | null)?.closest("[data-action='delete-session']")) {
         hostDeleteClicks += 1;
         app.querySelector(".sb-section")?.replaceChildren();
       }
@@ -469,10 +491,10 @@ describe("pi-web-sidebar plugin", () => {
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-session='s1'] [data-action='session-menu-toggle']")
+    requireElement(app, "[data-session='s1'] [data-action='session-menu-toggle']")
       .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
-    expect(app.querySelector("[data-session='s1'] .session-menu").hidden).toBe(false);
-    app.querySelector("[data-session='s1'] [data-action='delete-session']")
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-menu").hidden).toBe(false);
+    requireElement(app, "[data-session='s1'] [data-action='delete-session']")
       .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
@@ -505,7 +527,7 @@ describe("pi-web-sidebar plugin", () => {
     const animated: string[] = [];
     app.querySelectorAll(".workspace-group").forEach((group) => {
       group.animate = (() => {
-        animated.push(group.dataset.workspaceGroup);
+        animated.push(group.dataset.workspaceGroup || "");
         return {} as Animation;
       }) as typeof group.animate;
       group.getBoundingClientRect = (): DOMRect => ({
@@ -520,22 +542,23 @@ describe("pi-web-sidebar plugin", () => {
         toJSON: (): Record<string, number> => ({}),
       });
     });
-    const workspaceHandle = app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle");
-    const workspaceTarget = app.querySelector("[data-workspace-group='w2']");
+    const workspaceHandle = requireElement(app, "[data-workspace-group='w1'] .workspace-drag-handle");
+    const workspaceTarget = requireElement(app, "[data-workspace-group='w2']");
+    const pluginSidebar = requireElement(app, "[data-pi-web-sidebar-plugin]");
     workspaceHandle.dispatchEvent(dragEvent("dragstart"));
-    expect(app.querySelector("[data-pi-web-sidebar-plugin]").classList.contains("pi-web-sidebar-dragging-workspace")).toBe(true);
-    expect([...app.querySelectorAll(".workspace-group > .sessions")].every((sessions) => sessions.hidden)).toBe(true);
+    expect(pluginSidebar.classList.contains("pi-web-sidebar-dragging-workspace")).toBe(true);
+    expect([...app.querySelectorAll<HTMLElement>(".workspace-group > .sessions")].every((sessions) => sessions.hidden)).toBe(true);
     workspaceTarget.dispatchEvent(dragEvent("dragover", { clientY: 19 }));
-    app.querySelector("[data-pi-web-sidebar-plugin]").dispatchEvent(dragEvent("drop"));
+    pluginSidebar.dispatchEvent(dragEvent("drop"));
 
-    expect([...app.querySelectorAll(".workspace-group")].map((group) => group.dataset.workspaceGroup)).toEqual(["w2", "w1"]);
-    expect(JSON.parse(localStorage.getItem("pi.workspaceOrder"))).toEqual(["w2", "w1"]);
+    expect([...app.querySelectorAll<HTMLElement>(".workspace-group")].map((group) => group.dataset.workspaceGroup || "")).toEqual(["w2", "w1"]);
+    expect(JSON.parse(localStorage.getItem("pi.workspaceOrder") || "[]")).toEqual(["w2", "w1"]);
     expect(animated).toContain("w1");
-    expect(app.querySelector("[data-workspace-group='w1'] > .sessions").hidden).toBe(false);
-    expect(app.querySelector("[data-workspace-group='w2'] > .sessions").hidden).toBe(true);
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] > .sessions").hidden).toBe(false);
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w2'] > .sessions").hidden).toBe(true);
 
-    const sessionHandle = app.querySelector("[data-session='s1'] .session-drag-handle");
-    const sessionTarget = app.querySelector("[data-session='s2']");
+    const sessionHandle = requireElement(app, "[data-session='s1'] .session-drag-handle");
+    const sessionTarget = requireElement<HTMLElement>(app, "[data-session='s2']");
     sessionTarget.getBoundingClientRect = (): DOMRect => ({
       bottom: 0,
       height: 10,
@@ -549,33 +572,33 @@ describe("pi-web-sidebar plugin", () => {
     });
     sessionHandle.dispatchEvent(dragEvent("dragstart"));
     sessionTarget.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
-    app.querySelector("[data-pi-web-sidebar-plugin]").dispatchEvent(dragEvent("drop"));
+    pluginSidebar.dispatchEvent(dragEvent("drop"));
 
-    expect([...app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")].map((row) => row.dataset.session)).toEqual(["s2", "s1"]);
-    expect(JSON.parse(localStorage.getItem("pi.sessionOrder"))).toEqual({ w1: ["s2", "s1"] });
+    expect([...app.querySelectorAll<HTMLElement>("[data-workspace-group='w1'] .session-row[data-session]")].map((row) => row.dataset.session || "")).toEqual(["s2", "s1"]);
+    expect(JSON.parse(localStorage.getItem("pi.sessionOrder") || "{}")).toEqual({ w1: ["s2", "s1"] });
   });
 
   test("plugin open button uses backend folder browser and opens selected workspace path", async () => {
     const app = setupApp();
     const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
-      context.backendCalls.push({ method, options });
+      context.backendCalls!.push({ method, options });
       return { path: "/picked", displayPath: "/picked", parent: "/", folders: [{ name: "workspace", path: "/picked/workspace" }] };
     } });
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
 
     expect(context.backendCalls).toEqual([{ method: "list-folders", options: { data: { path: "~" } } }]);
-    expect(app.querySelector("[data-pi-web-sidebar-picker]").hidden).toBe(false);
+    expect(requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]").hidden).toBe(false);
     expect(app.querySelector("[data-picker-action='up']")).toBeFalsy();
     const rows = [...app.querySelectorAll(".pi-sidebar-picker-row")];
     expect(rows[0].textContent).toContain("..");
     expect(rows[1].textContent).toContain("workspace");
 
-    app.querySelector("[data-picker-action='open-current']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-picker-action='open-current']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -584,11 +607,123 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.dataset.route).toBe("workspace");
   });
 
+  test("plugin folder browser restores focus and closes with Escape", async () => {
+    const app = setupApp();
+    const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls!.push({ method, options });
+      return { path: "/picked", displayPath: "/picked", parent: "/", folders: [] };
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    const openButton = requireElement<HTMLButtonElement>(app, "[data-pi-web-sidebar-action='open-workspace']");
+    openButton.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    const picker = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]");
+    expect(document.activeElement).toBe(requireElement<HTMLInputElement>(picker, 'input[name="path"]'));
+
+    picker.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+    expect(picker.hidden).toBe(true);
+    expect(document.activeElement).toBe(openButton);
+  });
+
+  test("plugin folder browser resets nested dialogs when closed", async () => {
+    const app = setupApp();
+    const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls!.push({ method, options });
+      return { path: "/picked", displayPath: "/picked", parent: "/", folders: [] };
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    const openButton = requireElement<HTMLButtonElement>(app, "[data-pi-web-sidebar-action='open-workspace']");
+    openButton.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const picker = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]");
+    requireElement(picker, "[data-picker-action='clone']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(requireElement<HTMLElement>(picker, "[data-clone-dialog]").hidden).toBe(false);
+
+    picker.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    picker.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    openButton.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(requireElement<HTMLElement>(picker, "[data-clone-dialog]").hidden).toBe(true);
+  });
+
+  test("plugin folder browser restores focus after nested dialog cancel", async () => {
+    const app = setupApp();
+    const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls!.push({ method, options });
+      return { path: "/picked", displayPath: "/picked", parent: "/", folders: [] };
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const picker = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]");
+    const newFolderButton = requireElement<HTMLButtonElement>(picker, "[data-picker-action='new-folder']");
+    newFolderButton.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement<HTMLInputElement>(picker, "[data-new-folder-form] input[name='name']").focus();
+    requireElement(picker, "[data-picker-action='new-folder-cancel']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    expect(document.activeElement).toBe(newFolderButton);
+  });
+
+  test("plugin folder browser traps focus inside nested dialogs", async () => {
+    const app = setupApp();
+    const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
+      context.backendCalls!.push({ method, options });
+      return { path: "/picked", displayPath: "/picked", parent: "/", folders: [] };
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const picker = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]");
+    requireElement(picker, "[data-picker-action='new-folder']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    const createButton = requireElement<HTMLButtonElement>(picker, "[data-new-folder-form] button[type='submit']");
+    const nameInput = requireElement<HTMLInputElement>(picker, "[data-new-folder-form] input[name='name']");
+    createButton.focus();
+    picker.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+
+    expect(document.activeElement).toBe(nameInput);
+  });
+
+  test("request fallback tolerates empty success responses", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (): Promise<Response> => new Response(null, { status: 204 })) as unknown as typeof fetch;
+
+    try {
+      await expect(requestPiWeb({}, "/api/empty")).resolves.toEqual({});
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("plugin folder browser creates a new folder through backend modal and refreshes", async () => {
     const app = setupApp();
     let folders: { name: string; path: string }[] = [];
     const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
-      context.backendCalls.push({ method, options });
+      context.backendCalls!.push({ method, options });
       if (method === "create-folder") {
         folders = [{ name: "new-dir", path: "/home/me/new-dir" }];
         return { name: "new-dir", path: "/home/me/new-dir" };
@@ -598,42 +733,42 @@ describe("pi-web-sidebar plugin", () => {
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
-    app.querySelector("[data-picker-action='new-folder']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
-    expect(app.querySelector("[data-new-folder-dialog]").hidden).toBe(false);
-    app.querySelector("[data-new-folder-form] input[name='name']").value = "new-dir";
-    app.querySelector("[data-new-folder-form]").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-picker-action='new-folder']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(requireElement<HTMLElement>(app, "[data-new-folder-dialog]").hidden).toBe(false);
+    requireElement<HTMLInputElement>(app, "[data-new-folder-form] input[name='name']").value = "new-dir";
+    requireElement(app, "[data-new-folder-form]").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
-    expect(app.querySelector("[data-new-folder-dialog]").hidden).toBe(true);
-    expect(context.backendCalls.at(-2)).toEqual({ method: "create-folder", options: { data: { parent: "/home/me", name: "new-dir" } } });
-    expect(context.backendCalls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me" } } });
-    expect(app.querySelector(".pi-sidebar-picker-row[data-path='/home/me/new-dir']").textContent).toContain("new-dir");
+    expect(requireElement<HTMLElement>(app, "[data-new-folder-dialog]").hidden).toBe(true);
+    expect(context.backendCalls!.at(-2)).toEqual({ method: "create-folder", options: { data: { parent: "/home/me", name: "new-dir" } } });
+    expect(context.backendCalls!.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me" } } });
+    expect(requireElement<HTMLElement>(app, ".pi-sidebar-picker-row[data-path='/home/me/new-dir']").textContent).toContain("new-dir");
   });
 
   test("plugin folder browser clones a git repository through backend modal and enters clone", async () => {
     const app = setupApp();
     const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
-      context.backendCalls.push({ method, options });
+      context.backendCalls!.push({ method, options });
       if (method === "clone-workspace") return { name: "repo", path: "/home/me/repo" };
-      if (options.data.path === "/home/me/repo") return { path: "/home/me/repo", parent: "/home/me", folders: [] };
+      if (options.data!.path === "/home/me/repo") return { path: "/home/me/repo", parent: "/home/me", folders: [] };
       return { path: "/home/me", parent: "/home", folders: [{ name: "repo", path: "/home/me/repo" }] };
     } });
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
-    app.querySelector("[data-picker-action='clone']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
-    expect(app.querySelector("[data-clone-dialog]").hidden).toBe(false);
-    app.querySelector("[data-clone-form] input[name='gitUrl']").value = "https://example.com/repo.git";
-    app.querySelector("[data-clone-form] input[name='name']").value = "repo";
-    app.querySelector("[data-clone-form]").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-picker-action='clone']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(requireElement<HTMLElement>(app, "[data-clone-dialog]").hidden).toBe(false);
+    requireElement<HTMLInputElement>(app, "[data-clone-form] input[name='gitUrl']").value = "https://example.com/repo.git";
+    requireElement<HTMLInputElement>(app, "[data-clone-form] input[name='name']").value = "repo";
+    requireElement(app, "[data-clone-form]").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -641,10 +776,10 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
-    expect(app.querySelector("[data-clone-dialog]").hidden).toBe(true);
-    expect(context.backendCalls.at(-3)).toEqual({ method: "clone-workspace", options: { data: { parent: "/home/me", gitUrl: "https://example.com/repo.git", name: "repo" } } });
-    expect(context.backendCalls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/repo" } } });
-    expect(app.querySelector("[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/repo");
+    expect(requireElement<HTMLElement>(app, "[data-clone-dialog]").hidden).toBe(true);
+    expect(context.backendCalls!.at(-3)).toEqual({ method: "clone-workspace", options: { data: { parent: "/home/me", gitUrl: "https://example.com/repo.git", name: "repo" } } });
+    expect(context.backendCalls!.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/repo" } } });
+    expect(requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/repo");
   });
 
   test("plugin folder browser enters child folders through backend", async () => {
@@ -654,21 +789,21 @@ describe("pi-web-sidebar plugin", () => {
       "/home/me/code": { path: "/home/me/code", parent: "/home/me", folders: [] },
     };
     const context = testContext(app, { backendCalls: [], backend: async (method, options) => {
-      context.backendCalls.push({ method, options });
-      return responses[String(options.data.path)];
+      context.backendCalls!.push({ method, options });
+      return responses[String(options.data!.path)];
     } });
     const controller = createSidebarController(app, context);
 
     controller.mount();
-    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
-    app.querySelector(".pi-sidebar-picker-row[data-path='/home/me/code']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, ".pi-sidebar-picker-row[data-path='/home/me/code']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
-    expect(context.backendCalls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/code" } } });
-    expect(app.querySelector("[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/code");
+    expect(context.backendCalls!.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/code" } } });
+    expect(requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/code");
     expect(app.querySelector(".pi-sidebar-picker-empty")).toBeFalsy();
   });
 
@@ -677,7 +812,7 @@ describe("pi-web-sidebar plugin", () => {
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
-    app.querySelector("[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-pi-web-sidebar-action='open-workspace']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
 
     expect(app.dataset.route).toBe("picker");
@@ -690,7 +825,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
     const down = new window.Event("pointerdown");
     Object.defineProperty(down, "clientX", { value: 100 });
-    app.querySelector(".sb-resizer").dispatchEvent(down);
+    requireElement(app, ".sb-resizer").dispatchEvent(down);
     const move = new window.Event("pointermove");
     Object.defineProperty(move, "clientX", { value: 130 });
     window.dispatchEvent(move);
@@ -707,6 +842,6 @@ describe("pi-web-sidebar plugin", () => {
     globalThis.document = windowRef.document as unknown as Document;
     document.body.innerHTML = "<pi-app></pi-app>";
 
-    expect(() => createSidebarController(document.querySelector("pi-app")).mount()).toThrow(".app-body");
+    expect(() => createSidebarController(requireElement(document, "pi-app") as AppElement).mount()).toThrow(".app-body");
   });
 });
