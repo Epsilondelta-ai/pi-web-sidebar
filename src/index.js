@@ -1,6 +1,8 @@
 const PLUGIN_PANEL_ATTR = "data-pi-web-sidebar-plugin";
 const ORIGINAL_PLACEHOLDER_ATTR = "data-pi-web-sidebar-original-placeholder";
 const FALLBACK_STYLE_ID = "pi-web-sidebar-fallback-drag-style";
+const SIDEBAR_WIDTH_KEY = "pi.sb.width";
+const SIDEBAR_COLLAPSED_KEY = "pi.sb.collapsed";
 
 const ICONS = {
   plus: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>',
@@ -20,6 +22,7 @@ export function createSidebarController(app, context = {}) {
   let nativeSidebar = null;
   let nativePlaceholder = null;
   let draggedItem = null;
+  let workspaces = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
 
   function mount() {
     const body = app.querySelector(".app-body");
@@ -45,11 +48,12 @@ export function createSidebarController(app, context = {}) {
     installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
     bindResizer(wrap, app);
-    bindOpenWorkspace(wrap, app, context);
+    bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap, app);
-    bindWorkspaceActions(wrap, app);
+    bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces);
     renderCurrentWorkspaces();
-    app.restoreSidebar?.();
+    restoreSidebarLayout(app);
+    void refreshCurrentWorkspaces({ quiet: true });
   }
 
   function dispose() {
@@ -65,13 +69,25 @@ export function createSidebarController(app, context = {}) {
     nativePlaceholder = null;
     nativeSidebar = null;
     wrap = null;
-    app.applyGrid?.();
+    applySidebarGrid(app);
   }
 
   function renderCurrentWorkspaces() {
-    renderPluginWorkspaceList(wrap, app, app.workspaceList || []);
+    renderPluginWorkspaceList(wrap, app, workspaces);
     ensureWorkspaceDragHandles(wrap);
     ensureSessionDragHandles(wrap);
+  }
+
+  async function refreshCurrentWorkspaces() {
+    try {
+      const nextWorkspaces = await loadWorkspaces(context);
+      workspaces = nextWorkspaces;
+      renderCurrentWorkspaces();
+    } catch (error) {
+      console.warn("pi-web-sidebar failed to refresh workspaces", error);
+    }
+
+    return workspaces;
   }
 
   function startDrag(item) {
@@ -177,7 +193,7 @@ export function createSidebarController(app, context = {}) {
 
   function persistWorkspaceOrder() {
     const ids = [...wrap.querySelectorAll(".workspace-group[data-workspace-group]")].map((group) => group.dataset.workspaceGroup);
-    app.reorderWorkspaces?.(ids);
+    storeWorkspaceOrder(ids);
   }
 
   function persistSessionOrder(workspaceId) {
@@ -187,7 +203,7 @@ export function createSidebarController(app, context = {}) {
 
     const group = wrap.querySelector(`.workspace-group[data-workspace-group='${cssEscape(workspaceId)}']`);
     const ids = [...group?.querySelectorAll(".session-row[data-session]") || []].map((row) => row.dataset.session);
-    app.reorderWorkspaceSessions?.(workspaceId, ids);
+    storeSessionOrder(workspaceId, ids);
   }
 
   function bindFallbackDrag(panel, host) {
@@ -221,10 +237,18 @@ export function createSidebarController(app, context = {}) {
     panel.dataset.piWebSidebarFallbackDragBound = "true";
   }
 
-  return { mount, dispose, render: renderCurrentWorkspaces, get element() { return wrap; } };
+  function render(nextWorkspaces) {
+    if (Array.isArray(nextWorkspaces)) {
+      workspaces = nextWorkspaces;
+    }
+
+    renderCurrentWorkspaces();
+  }
+
+  return { mount, dispose, render, refresh: refreshCurrentWorkspaces, get element() { return wrap; } };
 }
 
-function bindWorkspaceActions(wrap, app) {
+function bindWorkspaceActions(wrap, app, context, refreshWorkspaces) {
   if (wrap.dataset.piWebSidebarWorkspaceActionsBound === "true") {
     return;
   }
@@ -236,7 +260,7 @@ function bindWorkspaceActions(wrap, app) {
     }
 
     const action = target.dataset.action || (target.dataset.session ? "pick-session" : "");
-    if (await handleWorkspaceAction(action, target, app)) {
+    if (await handleWorkspaceAction(action, target, app, context, refreshWorkspaces)) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -244,12 +268,11 @@ function bindWorkspaceActions(wrap, app) {
   wrap.dataset.piWebSidebarWorkspaceActionsBound = "true";
 }
 
-async function handleWorkspaceAction(action, target, app) {
+async function handleWorkspaceAction(action, target, app, context, refreshWorkspaces) {
   if (action === "refresh-workspaces") {
     target.disabled = true;
     try {
-      await app.refreshWorkspaces?.();
-      renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+      await refreshWorkspaces();
     } finally {
       target.disabled = false;
     }
@@ -262,42 +285,37 @@ async function handleWorkspaceAction(action, target, app) {
   }
 
   if (action === "delete-workspace") {
-    await app.deleteWorkspace?.(target.dataset.workspace);
-    renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    if (confirm(`Remove workspace ${target.dataset.workspace} from this view?`)) {
+      await deleteWorkspaceById(context, target.dataset.workspace);
+      await refreshWorkspaces();
+    }
     return true;
   }
 
   if (action === "new-session") {
-    await app.newSession?.(target.dataset.workspace);
-    renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    await createWorkspaceSession(context, target.dataset.workspace);
+    await refreshWorkspaces();
     return true;
   }
 
   if (action === "delete-workspace-sessions") {
-    await app.deleteWorkspaceSessions?.(target.dataset.workspace);
-    renderPluginWorkspaceList(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`), app, app.workspaceList || []);
+    await deleteWorkspaceSessionList(context, target.dataset.workspace);
+    await refreshWorkspaces();
+    return true;
+  }
+
+  if (action === "collapse-sidebar") {
+    collapseSidebarLayout(app, true);
     return true;
   }
 
   if (action === "pick-session") {
-    await pickSession(target, app);
-    return true;
+    markSelectedSession(target, app);
+    routeWorkspace(app);
+    return false;
   }
 
   return false;
-}
-
-async function pickSession(row, app) {
-  if (typeof app.pickSession === "function") {
-    await app.pickSession(row);
-  } else if (row.dataset.session && typeof app.loadSession === "function") {
-    app.dataset.activeWorkspaceId = row.dataset.workspace || app.dataset.activeWorkspaceId || "";
-    app.dataset.activeSessionId = row.dataset.session;
-    await app.loadSession(row.dataset.session);
-  }
-
-  markSelectedSession(row, app);
-  app.route?.("workspace");
 }
 
 function markSelectedSession(row, app) {
@@ -704,11 +722,11 @@ function bindResizer(wrap, app) {
     return;
   }
 
-  resizer.addEventListener("pointerdown", (event) => app.startResize?.(event));
+  resizer.addEventListener("pointerdown", (event) => startSidebarResize(app, event));
   resizer.dataset.piWebSidebarResizeBound = "true";
 }
 
-function bindOpenWorkspace(wrap, app, context) {
+function bindOpenWorkspace(wrap, app, context, refreshWorkspaces) {
   if (wrap.dataset.piWebSidebarOpenBound === "true") {
     return;
   }
@@ -721,20 +739,20 @@ function bindOpenWorkspace(wrap, app, context) {
 
     event.preventDefault();
     event.stopPropagation();
-    await openWorkspaceWithBackend(button, app, context);
+    await openWorkspaceWithBackend(button, app, context, refreshWorkspaces);
   });
   wrap.dataset.piWebSidebarOpenBound = "true";
 }
 
-async function openWorkspaceWithBackend(button, app, context) {
+async function openWorkspaceWithBackend(button, app, context, refreshWorkspaces) {
   if (typeof context.backend !== "function") {
-    app.route?.("picker");
+    routePicker(app);
     return;
   }
 
   button.disabled = true;
   try {
-    const picker = ensureWorkspacePicker(app, context);
+    const picker = ensureWorkspacePicker(app, context, refreshWorkspaces);
     picker.hidden = false;
     await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
   } catch (error) {
@@ -744,7 +762,7 @@ async function openWorkspaceWithBackend(button, app, context) {
   }
 }
 
-function ensureWorkspacePicker(app, context) {
+function ensureWorkspacePicker(app, context, refreshWorkspaces) {
   let picker = app.querySelector("[data-pi-web-sidebar-picker]");
   if (picker) {
     return picker;
@@ -799,7 +817,7 @@ function ensureWorkspacePicker(app, context) {
       if (action === "new-folder-cancel") hideNewFolderDialog(picker);
       if (action === "clone") showCloneWorkspaceDialog(picker);
       if (action === "clone-cancel") hideCloneWorkspaceDialog(picker);
-      if (action === "open-current") await openPickedWorkspace(app, picker.dataset.currentPath || "");
+      if (action === "open-current") await openPickedWorkspace(app, context, refreshWorkspaces, picker.dataset.currentPath || "");
     } catch (error) {
       showWorkspacePickerError(app, error);
     }
@@ -922,13 +940,11 @@ function createWorkspacePickerRow(folder, icon) {
   return row;
 }
 
-async function openPickedWorkspace(app, path) {
+async function openPickedWorkspace(app, context, refreshWorkspaces, path) {
   if (!path) return;
-  if (typeof app.openWorkspacePath === "function") {
-    await app.openWorkspacePath(path);
-  } else {
-    app.route?.("workspace");
-  }
+  await openWorkspacePath(context, path);
+  await refreshWorkspaces();
+  routeWorkspace(app);
   app.querySelector("[data-pi-web-sidebar-picker]")?.setAttribute("hidden", "");
 }
 
@@ -939,6 +955,183 @@ function showWorkspacePickerError(app, error) {
   const target = picker?.querySelector("[data-picker-error]");
   if (target) target.textContent = message;
   else alert(`Failed to open workspace: ${message}`);
+}
+
+async function loadWorkspaces(context) {
+  const result = await requestPiWeb(context, "/api/workspaces");
+  return Array.isArray(result?.workspaces) ? result.workspaces : [];
+}
+
+function openWorkspacePath(context, path) {
+  return requestPiWeb(context, "/api/workspaces/open", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+function deleteWorkspaceById(context, workspaceId) {
+  if (!workspaceId) {
+    return undefined;
+  }
+
+  return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
+}
+
+function createWorkspaceSession(context, workspaceId) {
+  if (!workspaceId) {
+    return undefined;
+  }
+
+  return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`, { method: "POST" });
+}
+
+function deleteWorkspaceSessionList(context, workspaceId) {
+  if (!workspaceId) {
+    return undefined;
+  }
+
+  return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`, { method: "DELETE" });
+}
+
+async function requestPiWeb(context, path, options = {}) {
+  if (typeof context.apiRequest === "function") {
+    return context.apiRequest(path, options);
+  }
+
+  const response = await fetch(`${apiBase()}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body.error) {
+        message = body.error;
+      }
+    } catch {}
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+function apiBase() {
+  if (globalThis.PI_WEB_API_BASE !== undefined) {
+    return globalThis.PI_WEB_API_BASE;
+  }
+
+  return "";
+}
+
+function routePicker(app) {
+  app.dataset.route = "picker";
+  app.querySelector('[data-view="picker"]')?.removeAttribute("hidden");
+  app.querySelector('[data-view="workspace"]')?.setAttribute("hidden", "");
+}
+
+function routeWorkspace(app) {
+  app.dataset.route = "workspace";
+  app.querySelector('[data-view="workspace"]')?.removeAttribute("hidden");
+  app.querySelector('[data-view="picker"]')?.setAttribute("hidden", "");
+}
+
+function restoreSidebarLayout(app) {
+  const width = readStoredSidebarWidth();
+  if (width) {
+    app.dataset.sidebarWidth = String(width);
+  }
+
+  try {
+    collapseSidebarLayout(app, localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
+  } catch {
+    applySidebarGrid(app, width);
+  }
+}
+
+function collapseSidebarLayout(app, collapsed) {
+  app.dataset.sidebar = collapsed ? "collapsed" : "open";
+  app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)?.toggleAttribute("hidden", collapsed);
+  const expand = app.querySelector(".sb-expand-btn");
+  if (expand) {
+    expand.style.display = collapsed ? "inline-flex" : "none";
+  }
+
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {}
+  applySidebarGrid(app);
+}
+
+function applySidebarGrid(app, width = Number(app.dataset.sidebarWidth || 280)) {
+  const body = app.querySelector(".app-body");
+  if (!body) {
+    return;
+  }
+
+  const tree = app.dataset.tree === "on";
+  const hasSidebar = !!app.querySelector(`[${PLUGIN_PANEL_ATTR}]`);
+  const collapsed = !hasSidebar || app.dataset.sidebar === "collapsed";
+  const treeWidth = 320;
+  const expandedColumns = tree ? `${width}px 1fr ${treeWidth}px` : `${width}px 1fr`;
+  const collapsedColumns = tree ? `1fr ${treeWidth}px` : "1fr";
+  body.style.gridTemplateColumns = collapsed ? collapsedColumns : expandedColumns;
+}
+
+function startSidebarResize(app, event) {
+  event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = Number(app.dataset.sidebarWidth || 280);
+  const move = (moveEvent) => {
+    const width = Math.min(480, Math.max(200, startWidth + moveEvent.clientX - startX));
+    app.dataset.sidebarWidth = String(width);
+    applySidebarGrid(app, width);
+    storeSidebarWidth(width);
+  };
+  const stopResize = () => {
+    storeSidebarWidth(Number(app.dataset.sidebarWidth || startWidth));
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stopResize);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", stopResize);
+}
+
+function readStoredSidebarWidth() {
+  try {
+    const storedWidthValue = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (!storedWidthValue) {
+      return undefined;
+    }
+
+    const width = Number(storedWidthValue);
+    return Number.isFinite(width) ? Math.min(480, Math.max(200, width)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function storeSidebarWidth(width) {
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  } catch {}
+}
+
+function storeWorkspaceOrder(ids) {
+  try {
+    localStorage.setItem("pi.workspaceOrder", JSON.stringify(ids));
+  } catch {}
+}
+
+function storeSessionOrder(workspaceId, ids) {
+  const orders = readStoredObject("pi.sessionOrder");
+  orders[workspaceId] = ids;
+  try {
+    localStorage.setItem("pi.sessionOrder", JSON.stringify(orders));
+  } catch {}
 }
 
 function findNativeSidebar(body, pluginWrap) {
