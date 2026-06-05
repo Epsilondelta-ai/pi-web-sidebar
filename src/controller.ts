@@ -30,7 +30,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       throw new Error("pi-web-sidebar requires .app-body");
     }
 
-    wrap = app.querySelector(`[${PLUGIN_PANEL_ATTR}]`) || createSidebar();
+    wrap = validPluginSidebar(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)) || createSidebar();
     const foundNativeSidebar: HTMLElement | undefined = findNativeSidebar(body, wrap);
     nativeSidebar = nativeSidebar || foundNativeSidebar || null;
 
@@ -308,6 +308,21 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   return { mount, dispose, render, refresh: refreshCurrentWorkspaces, get element(): HTMLElement | null { return wrap; } };
+}
+
+function validPluginSidebar(candidate: Element | null): HTMLElement | null {
+  if (!candidate || typeof (candidate as HTMLElement).querySelector !== "function") {
+    return null;
+  }
+
+  const sidebar: HTMLElement = candidate as HTMLElement;
+
+  if (!sidebar.querySelector(".sidebar .sb-section .sb-head")) {
+    sidebar.remove();
+    return null;
+  }
+
+  return sidebar;
 }
 
 function eventTarget(event: Event): HTMLElement | null {

@@ -263,6 +263,58 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement(app, ".app-body").firstElementChild?.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
   });
 
+  test("recreates a malformed plugin sidebar instead of rendering nothing", () => {
+    const app = setupApp();
+    app.querySelector("[data-native-sidebar]")?.remove();
+    requireElement(app, ".app-body").insertAdjacentHTML("afterbegin", '<div data-pi-web-sidebar-plugin></div>');
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    expect(app.querySelector("[data-pi-web-sidebar-plugin] .sb-head")?.textContent).toContain("workspaces");
+    expect(requireElement(app, "[data-workspace-group='w1'] .label").textContent).toBe("one");
+  });
+
+  test("renders an actionable empty workspace state", () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    expect(requireElement(app, "[data-pi-web-sidebar-plugin] .workspace-empty").textContent).toContain("press open");
+  });
+
+  test("removes empty workspace state when workspaces render later", () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
+
+    expect(app.querySelector("[data-pi-web-sidebar-plugin] .workspace-empty")).toBeFalsy();
+    expect(requireElement(app, "[data-workspace-group='w2'] .label").textContent).toBe("two");
+  });
+
+  test("collapsed restore keeps an expand control visible", () => {
+    const app = setupApp();
+    localStorage.setItem("pi.sb.collapsed", "1");
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const pluginSidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
+    const expand = requireElement<HTMLElement>(app, ".sb-expand-btn");
+    expect(pluginSidebar.hidden).toBe(true);
+    expect(expand.style.display).toBe("inline-flex");
+
+    expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    expect(pluginSidebar.hidden).toBe(false);
+    expect(expand.style.display).toBe("none");
+  });
+
   test("mount and dispose are idempotent", () => {
     const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
