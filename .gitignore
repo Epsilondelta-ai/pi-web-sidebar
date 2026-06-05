@@ -2,3 +2,4 @@ node_modules/
 .DS_Store
 .rezero/memory/
 .pi/npm
+.pi/pi-web.json
