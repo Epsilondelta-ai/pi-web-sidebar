@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+const BACKEND_TIMEOUT_MS = 6 * 60 * 1000;
 const dir = dirname(fileURLToPath(import.meta.url));
 const binary = resolveBinary();
 
@@ -23,10 +24,14 @@ const run = spawnSync(binary, process.argv.slice(2), {
   encoding: "utf8",
   input: await readStdin(),
   maxBuffer: 1024 * 1024 * 8,
+  timeout: BACKEND_TIMEOUT_MS,
 });
 
 if (run.error) {
-  process.stderr.write(`Failed to execute backend binary: ${run.error.message}\n`);
+  const message = run.error.code === "ETIMEDOUT"
+    ? `Backend timed out after ${BACKEND_TIMEOUT_MS / 1000}s`
+    : `Failed to execute backend binary: ${run.error.message}`;
+  process.stderr.write(`${message}\n`);
   process.exit(1);
 }
 

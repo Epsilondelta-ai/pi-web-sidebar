@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
+
+const gitCloneTimeout = 5 * time.Minute
 
 type request map[string]any
 
@@ -35,14 +39,16 @@ func main() {
 		fail(err)
 	}
 
+	data := requestData(input)
+
 	var result any
 	switch method {
 	case "list-folders":
-		result, err = listFolders(stringInput(input, "path"))
+		result, err = listFolders(stringInput(data, "path"))
 	case "create-folder":
-		result, err = createFolder(stringInput(input, "parent"), stringInput(input, "name"))
+		result, err = createFolder(stringInput(data, "parent"), stringInput(data, "name"))
 	case "clone-workspace":
-		result, err = cloneWorkspace(stringInput(input, "parent"), stringInput(input, "gitUrl"), stringInput(input, "name"))
+		result, err = cloneWorkspace(stringInput(data, "parent"), stringInput(data, "gitUrl"), stringInput(data, "name"))
 	default:
 		err = fmt.Errorf("unknown method: %s", method)
 	}
@@ -72,6 +78,14 @@ func readInput(reader io.Reader) (request, error) {
 	}
 	var input request
 	return input, json.Unmarshal(data, &input)
+}
+
+func requestData(input request) request {
+	data, ok := input["data"].(map[string]any)
+	if !ok {
+		return input
+	}
+	return request(data)
 }
 
 func stringInput(input request, key string) string {
@@ -137,10 +151,17 @@ func cloneWorkspace(parent, gitURL, name string) (folderInfo, error) {
 		}
 		args = append(args, cleanName)
 	}
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitCloneTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return folderInfo{}, fmt.Errorf("git clone timed out after %s", gitCloneTimeout)
+		}
+
 		message := strings.TrimSpace(string(output))
 		if message == "" {
 			message = err.Error()

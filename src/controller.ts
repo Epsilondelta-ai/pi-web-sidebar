@@ -18,6 +18,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let nativeSidebar: HTMLElement | null = null;
   let nativePlaceholder: HTMLTemplateElement | null = null;
   let draggedItem: DragItem | null = null;
+  let resizeCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
@@ -57,7 +58,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
-    bindResizer(wrap, app, sidebarBridge);
+    resizeCleanup = bindResizer(wrap, app, sidebarBridge);
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
     bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
@@ -69,6 +70,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
   function dispose(): void {
     resetHostSidebarRenderState(app);
+    resizeCleanup?.();
+    resizeCleanup = undefined;
     app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
     wrap?.remove();
 
@@ -264,7 +267,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     panel.addEventListener("dragstart", (event: DragEvent): void => {
-      const handle: HTMLElement | null = eventTarget(event)?.closest("[data-pi-web-sidebar-drag-handle]");
+      const handle: HTMLElement | null = eventTarget(event)?.closest("[data-pi-web-sidebar-drag-handle]") || null;
 
       if (!handle) {
         return;

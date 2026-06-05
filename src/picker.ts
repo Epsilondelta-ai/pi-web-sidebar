@@ -5,6 +5,8 @@ import { renderWorkspacePickerRows } from "./picker-rows";
 import { eventTarget, isRecord, textInputValue } from "./picker-utils";
 import type { AppElement, FolderEntry, FolderListing, PluginContext, SidebarWorkspace } from "./types";
 
+const pickerReturnFocus: WeakMap<HTMLElement, HTMLElement> = new WeakMap();
+
 export function bindOpenWorkspace(
   wrap: HTMLElement,
   app: AppElement,
@@ -16,7 +18,7 @@ export function bindOpenWorkspace(
   }
 
   wrap.addEventListener("click", async (event: MouseEvent): Promise<void> => {
-    const button: HTMLButtonElement | null = eventTarget(event)?.closest("[data-pi-web-sidebar-action='open-workspace']");
+    const button: HTMLButtonElement | null = eventTarget(event)?.closest("[data-pi-web-sidebar-action='open-workspace']") || null;
 
     if (!button || !wrap.contains(button)) {
       return;
@@ -44,7 +46,9 @@ async function openWorkspaceWithBackend(
 
   try {
     const picker: HTMLElement = ensureWorkspacePicker(app, context, refreshWorkspaces);
+    pickerReturnFocus.set(picker, button);
     picker.hidden = false;
+    focusPickerPathInput(picker);
     await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
   } catch (error) {
     showWorkspacePickerError(app, error);
@@ -106,7 +110,7 @@ async function handlePickerAction(
   target: HTMLElement | null,
 ): Promise<void> {
   if (action === "close") {
-    picker.hidden = true;
+    closePicker(picker);
   }
   if (action === "refresh") {
     await loadWorkspacePickerPath(picker, context, picker.dataset.currentPath || "~");
@@ -157,7 +161,88 @@ function bindPickerForms(picker: HTMLElement, app: AppElement, context: PluginCo
     const form: HTMLFormElement = event.currentTarget as HTMLFormElement;
     await cloneWorkspaceIntoPickerFolder(picker, context, textInputValue(form, "gitUrl"), textInputValue(form, "name"));
   });
+  picker.addEventListener("keydown", (event: KeyboardEvent): void => handlePickerKeydown(picker, event));
 }
+
+function handlePickerKeydown(picker: HTMLElement, event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeTopPickerDialog(picker);
+    return;
+  }
+
+  if (event.key === "Tab") {
+    trapPickerFocus(picker, event);
+  }
+}
+
+function closeTopPickerDialog(picker: HTMLElement): void {
+  const cloneDialog: HTMLElement | null = picker.querySelector("[data-clone-dialog]:not([hidden])");
+  const folderDialog: HTMLElement | null = picker.querySelector("[data-new-folder-dialog]:not([hidden])");
+
+  if (cloneDialog) {
+    hideDialog(picker, "[data-clone-dialog]");
+    picker.querySelector<HTMLElement>("[data-picker-action='clone']")?.focus();
+    return;
+  }
+
+  if (folderDialog) {
+    hideDialog(picker, "[data-new-folder-dialog]");
+    picker.querySelector<HTMLElement>("[data-picker-action='new-folder']")?.focus();
+    return;
+  }
+
+  closePicker(picker);
+}
+
+function trapPickerFocus(picker: HTMLElement, event: KeyboardEvent): void {
+  const focusRoot: HTMLElement = picker.querySelector<HTMLElement>("[data-clone-dialog]:not([hidden]), [data-new-folder-dialog]:not([hidden])") || picker;
+  const focusable: HTMLElement[] = [...focusRoot.querySelectorAll<HTMLElement>(
+    "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])",
+  )].filter(isVisibleFocusable);
+
+  if (focusable.length === 0) {
+    return;
+  }
+
+  const first: HTMLElement = focusable[0];
+  const last: HTMLElement = focusable[focusable.length - 1];
+  const active: Element | null = document.activeElement;
+
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+  }
+
+  if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function isVisibleFocusable(element: HTMLElement): boolean {
+  return !element.hasAttribute("disabled") && !element.hidden && !element.closest("[hidden]");
+}
+
+function closePicker(picker: HTMLElement): void {
+  resetPickerDialogs(picker);
+  picker.hidden = true;
+  const returnFocus: HTMLElement | undefined = pickerReturnFocus.get(picker);
+  pickerReturnFocus.delete(picker);
+  returnFocus?.focus();
+}
+
+function resetPickerDialogs(picker: HTMLElement): void {
+  hideDialog(picker, "[data-clone-dialog]");
+  hideDialog(picker, "[data-new-folder-dialog]");
+  picker.querySelector<HTMLFormElement>("[data-clone-form]")?.reset();
+  picker.querySelector<HTMLFormElement>("[data-new-folder-form]")?.reset();
+}
+
+function focusPickerPathInput(picker: HTMLElement): void {
+  picker.querySelector<HTMLInputElement>('input[name="path"]')?.focus();
+}
+
 async function loadWorkspacePickerPath(picker: HTMLElement, context: PluginContext, path: string): Promise<void> {
   const input: HTMLInputElement | null = picker.querySelector('input[name="path"]');
   const list: HTMLElement | null = picker.querySelector("[data-picker-list]");
@@ -275,7 +360,11 @@ async function openPickedWorkspace(
   await openWorkspacePath(context, path);
   await refreshWorkspaces();
   routeWorkspace(app);
-  app.querySelector("[data-pi-web-sidebar-picker]")?.setAttribute("hidden", "");
+  const picker: HTMLElement | null = app.querySelector("[data-pi-web-sidebar-picker]");
+
+  if (picker) {
+    closePicker(picker);
+  }
 }
 
 function showWorkspacePickerError(app: AppElement, error: unknown): void {
@@ -294,7 +383,26 @@ function showWorkspacePickerError(app: AppElement, error: unknown): void {
 function hideDialog(picker: HTMLElement, selector: string): void {
   const dialog: HTMLElement | null = picker.querySelector(selector);
 
-  if (dialog) {
-    dialog.hidden = true;
+  if (!dialog) {
+    return;
   }
+
+  const active: Element | null = document.activeElement;
+  dialog.hidden = true;
+
+  if (active && dialog.contains(active)) {
+    dialogReturnTarget(picker, selector)?.focus();
+  }
+}
+
+function dialogReturnTarget(picker: HTMLElement, selector: string): HTMLElement | null {
+  if (selector === "[data-clone-dialog]") {
+    return picker.querySelector("[data-picker-action='clone']");
+  }
+
+  if (selector === "[data-new-folder-dialog]") {
+    return picker.querySelector("[data-picker-action='new-folder']");
+  }
+
+  return null;
 }

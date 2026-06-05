@@ -24,7 +24,7 @@ export function bindWorkspaceActions(
   }
 
   wrap.addEventListener("click", async (event: MouseEvent): Promise<void> => {
-    const target: HTMLElement | null = eventTarget(event)?.closest("[data-action], .session-row[data-session]");
+    const target: HTMLElement | null = eventTarget(event)?.closest("[data-action], .session-row[data-session]") || null;
 
     if (!target || !wrap.contains(target)) {
       return;
