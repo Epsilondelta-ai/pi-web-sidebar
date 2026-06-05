@@ -184,9 +184,105 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector(".workspace-drag-handle")?.getAttribute("draggable")).toBe("true");
     expect(app.querySelector(".session-drag-handle")?.getAttribute("draggable")).toBe("true");
+    expect(app.querySelector("[data-session='s1'] .session-menu-button")?.getAttribute("aria-controls")).toBe("session-menu-s1");
+    expect(app.querySelector("[data-session='s1'] .session-menu [data-action='rename-session']")).toBeTruthy();
+    expect(app.querySelector("[data-session='s1'] .session-menu [data-action='delete-session']")).toBeTruthy();
     const sidebarStyle = document.getElementById("pi-web-sidebar-fallback-drag-style")?.textContent;
     expect(sidebarStyle).toContain(".session-row[data-session]");
     expect(sidebarStyle).toContain("padding-left: 12px");
+  });
+
+  test("new session click is handled once and renders session actions without full refresh", async () => {
+    const app = setupApp();
+    let hostNewSessionClicks = 0;
+    let hostNewSessionCalls = 0;
+    app.newSession = async () => {
+      hostNewSessionCalls += 1;
+      app.querySelector(".sb-section")?.replaceChildren();
+    };
+    const context = testContext(app, {
+      async apiRequest(path, options = {}) {
+        context.apiCalls.push({ path, options });
+        if (path === "/api/workspaces/w1/sessions" && options.method === "POST") {
+          app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+          return { session: { id: "s1", title: "new session" } };
+        }
+        if (path === "/api/workspaces") {
+          return { workspaces: app.testWorkspaces };
+        }
+        return {};
+      },
+    });
+    app.addEventListener("click", (event) => {
+      if (event.target.closest("[data-action='new-session']")) {
+        hostNewSessionClicks += 1;
+      }
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const createCalls = context.apiCalls.filter((call) => call.path === "/api/workspaces/w1/sessions");
+    expect(createCalls).toHaveLength(1);
+    expect(hostNewSessionClicks).toBe(0);
+    expect(hostNewSessionCalls).toBe(0);
+    expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
+    expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
+  });
+
+  test("session menu delete is handled by plugin without blanking sidebar", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    let hostDeleteClicks = 0;
+    let clearActiveSessionCalls = 0;
+    app.clearActiveSession = () => {
+      clearActiveSessionCalls += 1;
+      app.querySelector(".sb-section")?.replaceChildren();
+    };
+    const context = testContext(app, {
+      async apiRequest(path, options = {}) {
+        context.apiCalls.push({ path, options });
+        if (path === "/api/sessions/s1" && options.method === "DELETE") {
+          app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
+          return {};
+        }
+        if (path === "/api/workspaces") {
+          return { workspaces: app.testWorkspaces };
+        }
+        return {};
+      },
+    });
+    app.addEventListener("click", (event) => {
+      if (event.target.closest("[data-action='delete-session']")) {
+        hostDeleteClicks += 1;
+        app.querySelector(".sb-section")?.replaceChildren();
+      }
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    app.querySelector("[data-session='s1'] [data-action='session-menu-toggle']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(app.querySelector("[data-session='s1'] .session-menu").hidden).toBe(false);
+    app.querySelector("[data-session='s1'] [data-action='delete-session']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(context.apiCalls).toContainEqual({ path: "/api/sessions/s1", options: { method: "DELETE" } });
+    expect(hostDeleteClicks).toBe(0);
+    expect(clearActiveSessionCalls).toBe(0);
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
+    expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
   });
 
   test("fallback drag previews workspace and session moves before drop", async () => {
