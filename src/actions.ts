@@ -10,11 +10,13 @@ import { collapseSidebarLayout, routeWorkspace } from "./layout";
 import { markSelectedSession } from "./render";
 import type { AppElement, PluginContext, SidebarBridge, SidebarWorkspace } from "./types";
 
+type RefreshWorkspaces = (options?: { allowEmpty?: boolean }) => Promise<SidebarWorkspace[]>;
+
 export function bindWorkspaceActions(
   wrap: HTMLElement,
   app: AppElement,
   context: PluginContext,
-  refreshWorkspaces: () => Promise<SidebarWorkspace[]>,
+  refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): void {
   if (wrap.dataset.piWebSidebarWorkspaceActionsBound === "true") {
@@ -62,7 +64,7 @@ async function handleWorkspaceAction(
   target: HTMLElement,
   app: AppElement,
   context: PluginContext,
-  refreshWorkspaces: () => Promise<SidebarWorkspace[]>,
+  refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): Promise<boolean> {
   if (action === "refresh-workspaces") {
@@ -82,7 +84,7 @@ async function handleWorkspaceAction(
 
 async function refreshFromButton(
   target: HTMLElement,
-  refreshWorkspaces: () => Promise<SidebarWorkspace[]>,
+  refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): Promise<void> {
   const button: HTMLButtonElement | null = target.tagName === "BUTTON" ? (target as HTMLButtonElement) : null;
@@ -92,7 +94,7 @@ async function refreshFromButton(
   }
 
   try {
-    await refreshWorkspaces();
+    await refreshWorkspaces({ allowEmpty: true });
     sidebarBridge.emitEvent("refresh-click", {});
   } finally {
     if (button) {
@@ -106,7 +108,7 @@ async function handleMutatingWorkspaceAction(
   target: HTMLElement,
   app: AppElement,
   context: PluginContext,
-  refreshWorkspaces: () => Promise<SidebarWorkspace[]>,
+  refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): Promise<boolean> {
   if (action === "delete-workspace") {
@@ -132,12 +134,12 @@ async function handleMutatingWorkspaceAction(
 async function deleteWorkspaceAction(
   target: HTMLElement,
   context: PluginContext,
-  refreshWorkspaces: () => Promise<SidebarWorkspace[]>,
+  refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): Promise<boolean> {
   if (confirm(`Remove workspace ${target.dataset.workspace} from this view?`)) {
     await deleteWorkspaceById(context, target.dataset.workspace);
-    await refreshWorkspaces();
+    await refreshWorkspaces({ allowEmpty: true });
     sidebarBridge.emitEvent("delete-workspace", { workspaceId: target.dataset.workspace || "" });
   }
 
@@ -149,7 +151,7 @@ async function handleSessionAction(
   target: HTMLElement,
   app: AppElement,
   context: PluginContext,
-  refreshWorkspaces: () => Promise<SidebarWorkspace[]>,
+  refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): Promise<boolean> {
   if (action === "collapse-sidebar") {

@@ -11,11 +11,14 @@ import { readStoredObject, storeJson } from "./storage";
 import { ORIGINAL_PLACEHOLDER_ATTR, PLUGIN_PANEL_ATTR } from "./constants";
 import type { AppElement, DragItem, PluginContext, SidebarController, SidebarWorkspace } from "./types";
 
+type RefreshOptions = { allowEmpty?: boolean };
+
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
   let nativeSidebar: HTMLElement | null = null;
   let nativePlaceholder: HTMLTemplateElement | null = null;
   let draggedItem: DragItem | null = null;
+  let refreshSequence: number = 0;
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
@@ -88,9 +91,22 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarBridge.emitState("render-workspaces");
   }
 
-  async function refreshCurrentWorkspaces(): Promise<SidebarWorkspace[]> {
+  async function refreshCurrentWorkspaces(options: RefreshOptions = {}): Promise<SidebarWorkspace[]> {
+    const sequence: number = ++refreshSequence;
+
     try {
       const nextWorkspaces: SidebarWorkspace[] = await loadWorkspaces(context);
+
+      if (sequence !== refreshSequence) {
+        return workspaces;
+      }
+
+      if (!options.allowEmpty && nextWorkspaces.length === 0 && workspaces.length > 0) {
+        console.warn("pi-web-sidebar skipped transient empty workspace refresh");
+        sidebarBridge.emitEvent("refresh-workspaces-empty-skipped", { workspaceCount: workspaces.length });
+        return workspaces;
+      }
+
       workspaces = nextWorkspaces;
       renderCurrentWorkspaces();
       sidebarBridge.emitEvent("refresh-workspaces", { workspaceCount: workspaces.length });
