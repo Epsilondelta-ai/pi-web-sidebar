@@ -203,6 +203,36 @@ function requireElement<T extends Element = HTMLElement>(root: ParentNode, selec
   return element;
 }
 
+function setMobileViewport(matches: boolean): void {
+  const listeners: Set<(event: MediaQueryListEvent) => void> = new Set();
+  const media: MediaQueryList = {
+    matches,
+    media: "(max-width: 768px)",
+    onchange: null,
+    addEventListener: (_type: string, listener: EventListenerOrEventListenerObject): void => {
+      if (typeof listener === "function") {
+        listeners.add(listener as (event: MediaQueryListEvent) => void);
+      }
+    },
+    removeEventListener: (_type: string, listener: EventListenerOrEventListenerObject): void => {
+      if (typeof listener === "function") {
+        listeners.delete(listener as (event: MediaQueryListEvent) => void);
+      }
+    },
+    addListener: (listener: (event: MediaQueryListEvent) => void): void => {
+      listeners.add(listener);
+    },
+    removeListener: (listener: (event: MediaQueryListEvent) => void): void => {
+      listeners.delete(listener);
+    },
+    dispatchEvent: (): boolean => true,
+  } as unknown as MediaQueryList;
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: (): MediaQueryList => media,
+  });
+}
+
 function deferred<T>(): Deferred<T> {
   let resolveDeferred: ((value: T) => void) | undefined;
   const promise: Promise<T> = new Promise((resolve: (value: T) => void): void => {
@@ -326,6 +356,31 @@ describe("pi-web-sidebar plugin", () => {
     expect(expand.style.display).toBe("none");
   });
 
+  test("mobile viewport keeps a sidebar toggle visible while open", () => {
+    const app = setupApp();
+    setMobileViewport(true);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const pluginSidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
+    const expand = requireElement<HTMLButtonElement>(app, ".sb-expand-btn");
+    expect(pluginSidebar.hidden).toBe(false);
+    expect(expand.style.display).toBe("inline-flex");
+    expect(expand.getAttribute("aria-label")).toBe("collapse sidebar");
+
+    expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    expect(pluginSidebar.hidden).toBe(true);
+    expect(expand.style.display).toBe("inline-flex");
+    expect(expand.getAttribute("aria-label")).toBe("expand sidebar");
+
+    expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    expect(pluginSidebar.hidden).toBe(false);
+    expect(expand.style.display).toBe("inline-flex");
+  });
+
   test("mount and dispose are idempotent", () => {
     const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
@@ -335,6 +390,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
+    expect(app.querySelector(".sb-expand-btn")).toBeFalsy();
     expect(requireElement(app, ".app-body").children).toHaveLength(0);
   });
 

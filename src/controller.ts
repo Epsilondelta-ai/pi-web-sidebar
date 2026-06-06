@@ -4,7 +4,7 @@ import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
 import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
-import { applySidebarGrid, bindResizer, restoreSidebarLayout } from "./layout";
+import { applySidebarGrid, bindResizer, bindSidebarToggleViewport, restoreSidebarLayout } from "./layout";
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { readStoredObject, storeJson } from "./storage";
@@ -17,6 +17,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let wrap: HTMLElement | null = null;
   let draggedItem: DragItem | null = null;
   let resizeCleanup: (() => void) | undefined;
+  let sidebarToggleCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let channelSubscriptions: SubscriptionLike[] = [];
@@ -53,6 +54,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindPiWebChannels();
     renderCurrentWorkspaces();
     restoreSidebarLayout(app);
+    sidebarToggleCleanup?.();
+    sidebarToggleCleanup = bindSidebarToggleViewport(app);
     sidebarBridge.emitState("mounted");
     void refreshCurrentWorkspaces();
   }
@@ -61,6 +64,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     resetHostSidebarRenderState(app);
     resizeCleanup?.();
     resizeCleanup = undefined;
+    sidebarToggleCleanup?.();
+    sidebarToggleCleanup = undefined;
     channelSubscriptions.forEach((subscription: SubscriptionLike): void => subscription.unsubscribe());
     channelSubscriptions = [];
     if (refreshTimer) {
