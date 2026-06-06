@@ -57,10 +57,7 @@ function setupApp(): TestApp {
   globalThis.document = windowRef.document as unknown as Document;
   document.body.innerHTML = `
     <pi-app data-sidebar="open">
-      <section class="app-body">
-        <div class="sidebar-wrap" data-native-sidebar><aside class="sidebar"><div class="sb-section"><div class="sb-head"></div></div></aside></div>
-        <main class="main"></main>
-      </section>
+      <section class="app-body"></section>
     </pi-app>`;
   const app: TestApp | null = document.querySelector<TestApp>("pi-app");
 
@@ -222,7 +219,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 describe("pi-web-sidebar plugin", () => {
-  test("mounts plugin sidebar directly under app body and detaches native sidebar", async () => {
+  test("mounts plugin sidebar directly under empty app body", async () => {
     const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
 
@@ -241,19 +238,19 @@ describe("pi-web-sidebar plugin", () => {
     expect(pluginSidebar.querySelector("[data-action='route-picker']")).toBeFalsy();
     expect(pluginSidebar.querySelector(".sb-footer")).toBeFalsy();
     expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeFalsy();
-    expect(app.querySelector("[data-native-sidebar]")).toBeFalsy();
+    expect(app.querySelectorAll(".app-body > :not([data-pi-web-sidebar-plugin])")).toHaveLength(0);
     expect(requireElement(pluginSidebar, "[data-workspace-group='w1'] .label").textContent).toBe("one");
     expect(requireElement(pluginSidebar, "[data-workspace-group='w1'] .ws-path").textContent).toBe("/one");
     expect(app.renderSidebarWorkspacesCalls).toEqual([]);
     expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
     expect(app.restoreSidebarCalls).toBe(0);
-    expect(app.sidebarSortableCleanupCalls).toBe(1);
-    expect(app.sidebarSortableUnmounted).toBe(true);
-    expect(app.sidebarSortableRoot).toBeUndefined();
-    expect(app.sidebarSortableRenderToken).toBeUndefined();
+    expect(app.sidebarSortableCleanupCalls).toBe(0);
+    expect(app.sidebarSortableUnmounted).toBeUndefined();
+    expect(app.sidebarSortableRoot).toBeTruthy();
+    expect(app.sidebarSortableRenderToken).toBeTruthy();
   });
 
-  test("dispose removes plugin sidebar and restores native sidebar", () => {
+  test("dispose removes plugin sidebar and leaves app body empty", () => {
     const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
 
@@ -262,14 +259,14 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
     expect(app.querySelector("[data-pi-web-sidebar-picker]")).toBeFalsy();
-    expect(app.querySelector("[data-native-sidebar]")).toBeTruthy();
+    expect(requireElement(app, ".app-body").children).toHaveLength(0);
     expect(app.renderSidebarWorkspaces).toBe(app.baseRenderSidebarWorkspaces);
     expect(app.applyGridCalls).toBe(0);
     expect(app.sidebarSortableRoot).toBeUndefined();
     expect(app.sidebarSortableRenderToken).toBeUndefined();
   });
 
-  test("dispose restores native sidebar hidden when host state is collapsed", () => {
+  test("dispose leaves empty app body empty when host state is collapsed", () => {
     const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
 
@@ -277,23 +274,11 @@ describe("pi-web-sidebar plugin", () => {
     app.dataset.sidebar = "collapsed";
     controller.dispose();
 
-    expect(requireElement<HTMLElement>(app, "[data-native-sidebar]").hidden).toBe(true);
-  });
-
-  test("mounts without a native sidebar", () => {
-    const app = setupApp();
-    app.querySelector("[data-native-sidebar]")?.remove();
-    const controller = createSidebarController(app, testContext(app));
-
-    controller.mount();
-
-    expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeTruthy();
-    expect(requireElement(app, ".app-body").firstElementChild?.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+    expect(requireElement(app, ".app-body").children).toHaveLength(0);
   });
 
   test("recreates a malformed plugin sidebar instead of rendering nothing", () => {
     const app = setupApp();
-    app.querySelector("[data-native-sidebar]")?.remove();
     requireElement(app, ".app-body").insertAdjacentHTML("afterbegin", '<div data-pi-web-sidebar-plugin></div>');
     const controller = createSidebarController(app, testContext(app));
 
@@ -352,7 +337,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
-    expect(app.querySelectorAll("[data-native-sidebar]")).toHaveLength(1);
+    expect(requireElement(app, ".app-body").children).toHaveLength(0);
   });
 
   test("controller renders workspace changes without host sidebar renderers", () => {

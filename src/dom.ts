@@ -88,13 +88,6 @@ export function resetHostSidebarRenderState(app: AppElement): void {
   app.sidebarSortableRenderToken = undefined;
 }
 
-export function findNativeSidebar(body: HTMLElement, pluginWrap: HTMLElement): HTMLElement | undefined {
-  const sidebars: HTMLElement[] = [...body.querySelectorAll<HTMLElement>(".sidebar-wrap")];
-  return sidebars.find((candidate: HTMLElement): boolean => {
-    return candidate !== pluginWrap && !candidate.hasAttribute(PLUGIN_PANEL_ATTR);
-  });
-}
-
 export function createSidebar(): HTMLElement {
   const wrap: HTMLDivElement = document.createElement("div");
   wrap.className = "sidebar-wrap";

@@ -21,7 +21,7 @@ Observed issues:
 
 - It depends on host private DOM/class structure such as `.app-body`, `.sidebar-wrap`, `.workspace-group`, and
   `.session-row`.
-- It temporarily detaches the built-in sidebar and restores it on deactivation.
+- Earlier versions temporarily detached a built-in sidebar, but current pi-web no longer ships one in `.app-body`.
 - It exposes `context.app.piWebSidebar` as a custom bridge instead of using the shared `globalThis.piWeb` Subject
   registry.
 - It relies on `context.rxjs` constructors instead of pi-web's registry methods.
@@ -75,7 +75,7 @@ Activation must:
 6. Render from a state snapshot.
 7. Return a disposer that removes DOM, subscriptions, pending listeners, and in-flight resources.
 
-Activation must not detach the host sidebar or query private host classes.
+Activation must treat `.app-body` as an empty mount host. It must not detach or restore a host sidebar.
 
 ### State
 
@@ -274,7 +274,7 @@ Done when workspace/session behavior is unit-tested without DOM.
 ### Phase 3 — UI renderer
 
 - Render only from `SidebarState`.
-- Mount only into stable documented hooks.
+- Mount into the empty `.app-body` host used by current pi-web.
 - Remove built-in sidebar detach/restore behavior.
 - Make deactivation fully clean up plugin DOM and listeners.
 
@@ -330,7 +330,8 @@ Coverage expectations:
 
 ## Success criteria
 
-- No dependency on `.sidebar-wrap`, `.app-body`, `.workspace-group`, or other private host selectors.
+- No dependency on a host-provided `.sidebar-wrap`, `.workspace-group`, or other private host sidebar selectors.
+- `.app-body` is treated as an empty mount host.
 - No built-in sidebar detach/restore side effects.
 - Public integration happens through `globalThis.piWeb` shared Subject registry.
 - Plugin state is deterministic and plugin-owned.

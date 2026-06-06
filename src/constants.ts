@@ -1,5 +1,4 @@
 export const PLUGIN_PANEL_ATTR = "data-pi-web-sidebar-plugin";
-export const ORIGINAL_PLACEHOLDER_ATTR = "data-pi-web-sidebar-original-placeholder";
 export const FALLBACK_STYLE_ID = "pi-web-sidebar-fallback-drag-style";
 export const SIDEBAR_WIDTH_KEY = "pi.sb.width";
 export const SIDEBAR_COLLAPSED_KEY = "pi.sb.collapsed";

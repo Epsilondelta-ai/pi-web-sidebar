@@ -31,9 +31,9 @@ Use pi-web settings → Plugins → local path, then install this plugin folder.
 
 ## Notes
 
-Current pi-web already ships a built-in sidebar. On activation this plugin temporarily detaches the built-in
-`.sidebar-wrap`, mounts its own `.sidebar-wrap` under `.app-body`, and renders workspace/session rows itself. It does
-not wrap or call pi-web's sidebar workspace renderers. On deactivation it restores the built-in sidebar.
+Current pi-web no longer ships a built-in sidebar in `.app-body`. The host `.app-body` starts empty, so this plugin
+creates and mounts its own `.sidebar-wrap` there and owns the workspace/session sidebar surface. It does not detach,
+hide, or restore any native pi-web sidebar.
 
 The `+ open` button is implemented inside this plugin: frontend opens a custom folder picker, calls `backend.js` with
 `list-folders`, `create-folder`, or `clone-workspace`, `backend.js` executes the prebuilt Go binary, then the frontend
@@ -42,9 +42,9 @@ amd64/arm64; unsupported platforms fail fast with the expected binary path. Work
 delete workspace, sidebar resize/collapse, and reorder persistence are handled by this plugin without calling host app
 methods.
 
-When pi-web provides `context.rxjs`, the plugin exposes `app.piWebSidebar` as an explicit cross-plugin bridge:
-`state$` is a `BehaviorSubject` with the latest sidebar snapshot, and `events$` is a `Subject` for sidebar actions.
-Other plugins can subscribe with `context.app.piWebSidebar?.state$.subscribe(...)` after this plugin is active.
+When pi-web provides the shared `piWeb` Subject registry, the plugin publishes `plugin.pi-web-sidebar.state`,
+`plugin.pi-web-sidebar.selectedSession`, and `plugin.pi-web-sidebar.event`. The legacy `app.piWebSidebar` bridge remains
+available for compatibility when this plugin is active.
 
 Build the browser plugin with:
 

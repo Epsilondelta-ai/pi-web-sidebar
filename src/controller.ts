@@ -3,20 +3,18 @@ import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
-import { createSidebar, findNativeSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
+import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
 import { applySidebarGrid, bindResizer, restoreSidebarLayout } from "./layout";
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { readStoredObject, storeJson } from "./storage";
-import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, ORIGINAL_PLACEHOLDER_ATTR, PLUGIN_PANEL_ATTR } from "./constants";
+import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
 import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace, SubscriptionLike } from "./types";
 
 type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
 
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
-  let nativeSidebar: HTMLElement | null = null;
-  let nativePlaceholder: HTMLTemplateElement | null = null;
   let draggedItem: DragItem | null = null;
   let resizeCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
@@ -33,13 +31,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     wrap = validPluginSidebar(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)) || createSidebar();
-    const foundNativeSidebar: HTMLElement | undefined = findNativeSidebar(body, wrap);
-    nativeSidebar = nativeSidebar || foundNativeSidebar || null;
-
-    if (!nativePlaceholder && foundNativeSidebar) {
-      detachNativeSidebar(foundNativeSidebar);
-    }
-
     if (!wrap.isConnected) {
       body.insertBefore(wrap, body.firstElementChild);
     }
@@ -47,12 +38,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindMountedSidebar();
   }
 
-  function detachNativeSidebar(foundNativeSidebar: HTMLElement): void {
-    resetHostSidebarRenderState(app);
-    nativePlaceholder = document.createElement("template");
-    nativePlaceholder.setAttribute(ORIGINAL_PLACEHOLDER_ATTR, "");
-    foundNativeSidebar.replaceWith(nativePlaceholder);
-  }
   function bindMountedSidebar(): void {
     if (!wrap) {
       return;
@@ -85,13 +70,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
     wrap?.remove();
 
-    if (nativePlaceholder?.isConnected && nativeSidebar) {
-      nativePlaceholder.replaceWith(nativeSidebar);
-      nativeSidebar.toggleAttribute("hidden", app.dataset.sidebar === "collapsed");
-    }
-
-    nativePlaceholder = null;
-    nativeSidebar = null;
     wrap = null;
     applySidebarGrid(app);
     sidebarBridge.dispose();
