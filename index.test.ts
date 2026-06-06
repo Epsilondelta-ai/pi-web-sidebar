@@ -138,6 +138,10 @@ class TestSubject<T> implements SubjectLike<T> {
   }
 
   next(value: T): void {
+    if (this.closed) {
+      return;
+    }
+
     this.value = value;
     for (const subscriber of this.subscribers) {
       subscriber(value);
@@ -370,9 +374,18 @@ describe("pi-web-sidebar plugin", () => {
     expect(events.some((event) => event.type === "state" && event.reason === "render-workspaces")).toBe(true);
 
     controller.dispose();
+    expect((state$ as TestSubject<import("./src/types").SidebarSnapshot>).closed).toBe(false);
+    expect((events$ as TestSubject<import("./src/types").SidebarActionEvent>).closed).toBe(false);
 
+    const secondController = createSidebarController(app, testContext(app));
+    secondController.mount();
+    secondController.render([{ id: "w3", name: "three", path: "/three", sessions: [] }]);
+
+    expect(states.at(-1)?.workspaces[0]?.id).toBe("w3");
+    expect(events.some((event) => event.type === "disposed")).toBe(true);
     expect(stateSubscription).toBeTruthy();
     expect(eventSubscription).toBeTruthy();
+    secondController.dispose();
   });
 
   test("persists selected session and publishes selectedSession over RxJS", async () => {

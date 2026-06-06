@@ -44,9 +44,6 @@ export function createSidebarBridge(
     },
     dispose(): void {
       events$.next({ type: "disposed", detail: {}, snapshot: latestSnapshot });
-      state$.complete();
-      selectedSession$.complete();
-      events$.complete();
     },
   };
 }
