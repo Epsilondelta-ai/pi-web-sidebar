@@ -43,8 +43,8 @@ delete workspace, sidebar resize/collapse, and reorder persistence are handled b
 methods.
 
 When pi-web provides the shared `piWeb` Subject registry, the plugin publishes `plugin.pi-web-sidebar.state`,
-`plugin.pi-web-sidebar.selectedSession`, and `plugin.pi-web-sidebar.event`. The legacy `app.piWebSidebar` bridge remains
-available for compatibility when this plugin is active.
+`plugin.pi-web-sidebar.selectedSession`, and `plugin.pi-web-sidebar.event`. Plugins should consume those channels through
+`globalThis.piWeb`.
 
 Build the browser plugin with:
 

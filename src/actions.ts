@@ -30,7 +30,7 @@ export function bindWorkspaceActions(
       return;
     }
 
-    const action: string = target.dataset.action || (target.dataset.session ? "pick-session" : "");
+    const action: string = target.dataset.action || (target.dataset.session ? "select-session" : "");
 
     if (shouldHandleActionInsidePlugin(action)) {
       event.preventDefault();
@@ -181,7 +181,7 @@ async function handleSessionAction(
     return true;
   }
 
-  if (action === "pick-session") {
+  if (action === "select-session") {
     markSelectedSession(target, app);
     persistSelectedSession(target);
     routeWorkspace(app);
@@ -190,8 +190,7 @@ async function handleSessionAction(
       workspaceId: target.dataset.workspace || "",
     };
     sidebarBridge.emitEvent("session.selected", detail);
-    sidebarBridge.emitEvent("pick-session", detail);
-    sidebarBridge.emitState("pick-session");
+    sidebarBridge.emitState("session.selected");
     return false;
   }
 

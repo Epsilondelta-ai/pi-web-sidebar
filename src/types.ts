@@ -58,14 +58,6 @@ export type SubjectLike<T> = {
   complete(): void;
 };
 
-export type BehaviorSubjectConstructor = new <T>(initialValue: T) => SubjectLike<T>;
-export type SubjectConstructor = new <T>() => SubjectLike<T>;
-
-export type RxjsLike = {
-  BehaviorSubject?: BehaviorSubjectConstructor;
-  Subject?: SubjectConstructor;
-};
-
 export type PiWebRegistry = {
   readonly version: string;
   subject<T>(name: string): SubjectLike<T>;
@@ -82,21 +74,11 @@ export type ApiRequest = (path: string, options?: ApiOptions) => Promise<unknown
 export type PluginContext = {
   app?: AppElement;
   initialWorkspaces?: SidebarWorkspace[];
-  rxjs?: RxjsLike;
   backend?: BackendCall;
   apiRequest?: ApiRequest;
 };
 
-export type SidebarApi = {
-  state$: SubjectLike<SidebarSnapshot>;
-  selectedSession$: SubjectLike<SelectedSession | null>;
-  events$: SubjectLike<SidebarActionEvent>;
-  refresh(): Promise<SidebarWorkspace[]>;
-  getSnapshot(): SidebarSnapshot;
-};
-
 export type AppElement = HTMLElement & {
-  piWebSidebar?: SidebarApi;
   sidebarOpenWorkspaceId?: string;
   sidebarSortableCleanup?: () => void;
   sidebarSortableRoot?: { unmount?: () => void };

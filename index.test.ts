@@ -93,6 +93,7 @@ function setupApp(): TestApp {
   app.sidebarSortableRenderToken = Symbol("old-render");
   globalThis.confirm = () => true;
   globalThis.localStorage = windowRef.localStorage;
+  installTestPiWeb();
   return app;
 }
 
@@ -146,13 +147,6 @@ class TestSubject<T> implements SubjectLike<T> {
   complete(): void {
     this.closed = true;
   }
-}
-
-function testRxjs(): PluginContext["rxjs"] {
-  return {
-    Subject: TestSubject,
-    BehaviorSubject: TestSubject,
-  };
 }
 
 function installTestPiWeb(): Map<string, TestSubject<unknown>> {
@@ -356,29 +350,27 @@ describe("pi-web-sidebar plugin", () => {
   test("exposes RxJS sidebar state and events for other plugins", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
-    const controller = createSidebarController(app, testContext(app, { rxjs: testRxjs() }));
+    const controller = createSidebarController(app, testContext(app));
     const states: import("./src/types").SidebarSnapshot[] = [];
     const events: import("./src/types").SidebarActionEvent[] = [];
+    const state$ = globalThis.piWeb!.behaviorSubject<import("./src/types").SidebarSnapshot>(
+      "plugin.pi-web-sidebar.state",
+      {} as import("./src/types").SidebarSnapshot,
+    );
+    const events$ = globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event");
 
     controller.mount();
-    const sidebarApi = app.piWebSidebar;
-
-    if (!sidebarApi) {
-      throw new Error("sidebar api not mounted");
-    }
-
-    const stateSubscription = sidebarApi.state$.subscribe((state) => states.push(state));
-    const eventSubscription = sidebarApi.events$.subscribe((event) => events.push(event));
+    const stateSubscription = state$.subscribe((state) => states.push(state));
+    const eventSubscription = events$.subscribe((event) => events.push(event));
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
-    expect(sidebarApi.getSnapshot().workspaceCount).toBe(1);
-    expect(sidebarApi.getSnapshot().sessionCount).toBe(0);
+    expect(states.at(-1)?.workspaceCount).toBe(1);
+    expect(states.at(-1)?.sessionCount).toBe(0);
     expect(states.at(-1)?.workspaces[0]?.id).toBe("w2");
     expect(events.some((event) => event.type === "state" && event.reason === "render-workspaces")).toBe(true);
 
     controller.dispose();
 
-    expect(app.piWebSidebar).toBeUndefined();
     expect(stateSubscription).toBeTruthy();
     expect(eventSubscription).toBeTruthy();
   });
@@ -386,30 +378,28 @@ describe("pi-web-sidebar plugin", () => {
   test("persists selected session and publishes selectedSession over RxJS", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
-    const controller = createSidebarController(app, testContext(app, { rxjs: testRxjs() }));
-    controller.mount();
-    await Promise.resolve();
-    const sidebarApi = app.piWebSidebar;
-
-    if (!sidebarApi) {
-      throw new Error("sidebar api not mounted");
-    }
-
+    const controller = createSidebarController(app, testContext(app));
     const selected: import("./src/types").SelectedSession[] = [];
     const events: import("./src/types").SidebarActionEvent[] = [];
-    sidebarApi.selectedSession$.subscribe((value) => {
+    globalThis.piWeb!.behaviorSubject<import("./src/types").SelectedSession | null>(
+      "plugin.pi-web-sidebar.selectedSession",
+      null,
+    ).subscribe((value) => {
       if (value) {
         selected.push(value);
       }
     });
-    sidebarApi.events$.subscribe((event) => events.push(event));
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event) => events.push(event));
+    controller.mount();
+    await Promise.resolve();
     requireElement<HTMLElement>(app, "[data-session='s1']").click();
 
     expect(localStorage.getItem("plugin.pi-web-sidebar.activeSessionId")).toBe("s1");
     expect(localStorage.getItem("plugin.pi-web-sidebar.activeWorkspaceId")).toBe("w1");
     expect(selected.at(-1)).toEqual({ sessionId: "s1", workspaceId: "w1" });
     expect(events.some((event) => event.type === "session.selected")).toBe(true);
-    expect(events.some((event) => event.type === "pick-session")).toBe(true);
+    expect(events.some((event) => event.type === "select-session")).toBe(false);
   });
 
   test("piWeb channels reconcile active id and first-message title updates", async () => {
@@ -1027,6 +1017,7 @@ describe("pi-web-sidebar plugin", () => {
     globalThis.window = windowRef as unknown as Window & typeof globalThis;
     globalThis.document = windowRef.document as unknown as Document;
     document.body.innerHTML = "<pi-app></pi-app>";
+    installTestPiWeb();
 
     expect(() => createSidebarController(requireElement(document, "pi-app") as AppElement).mount()).toThrow(".app-body");
   });

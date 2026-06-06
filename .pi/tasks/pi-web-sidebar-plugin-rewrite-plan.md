@@ -22,9 +22,9 @@ Observed issues:
 - It depends on host private DOM/class structure such as `.app-body`, `.sidebar-wrap`, `.workspace-group`, and
   `.session-row`.
 - Earlier versions temporarily detached a built-in sidebar, but current pi-web no longer ships one in `.app-body`.
-- It exposes `context.app.piWebSidebar` as a custom bridge instead of using the shared `globalThis.piWeb` Subject
-  registry.
-- It relies on `context.rxjs` constructors instead of pi-web's registry methods.
+- Older implementations exposed `context.app.piWebSidebar` as a custom bridge instead of using the shared
+  `globalThis.piWeb` Subject registry.
+- Older implementations relied on `context.rxjs` constructors instead of pi-web's registry methods.
 - It treats host DOM dataset fields as state inputs instead of keeping a plugin-owned state model.
 - Workspace/session behavior is spread across DOM handlers, API calls, and render code without a clear runtime/domain/UI
   split.
@@ -256,7 +256,7 @@ src/
 - Define `PluginRuntime` and channel contracts.
 - Add `piWeb.subject`, `piWeb.behaviorSubject`, and cleanup adapters.
 - Replace the planned public bridge with `plugin.pi-web-sidebar.*` channels.
-- Mark `context.app.piWebSidebar` as legacy and remove it during the rewrite.
+- Remove `context.app.piWebSidebar`, `context.rxjs`, and legacy action-event compatibility paths.
 
 Done when runtime/channel behavior is testable without DOM.
 
@@ -289,7 +289,7 @@ Done when activate/render/deactivate leaves no plugin DOM or subscriptions behin
 - Reconcile `session.activeId` into state, selected-session stream, and localStorage.
 - Reconcile first-message title changes from `session.changed`, with debounced API refresh fallback after
   `chat.input.submitted` when the session change channel is absent.
-- Remove the custom `app.piWebSidebar` bridge.
+- Remove the custom `app.piWebSidebar` bridge and legacy action-event aliases.
 
 Done when another plugin can observe sidebar state only through `globalThis.piWeb`.
 

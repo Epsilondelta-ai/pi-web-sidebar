@@ -11,35 +11,24 @@ import type {
   SubjectLike,
 } from "./types";
 
-export const NOOP_SIDEBAR_BRIDGE: SidebarBridge = {
-  emitState: (_reason: string): void => undefined,
-  emitEvent: (_type: string, _detail: Record<string, unknown> = {}): void => undefined,
-  dispose: (): void => undefined,
-};
-
 export function createSidebarBridge(
   app: AppElement,
-  context: PluginContext,
+  _context: PluginContext,
   getWorkspaces: () => SidebarWorkspace[],
   getElement: () => HTMLElement | null,
-  refresh: () => Promise<SidebarWorkspace[]>,
+  _refresh: () => Promise<SidebarWorkspace[]>,
 ): SidebarBridge {
+  if (!globalThis.piWeb) {
+    throw new Error("pi-web-sidebar requires globalThis.piWeb");
+  }
+
   let latestSnapshot: SidebarSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement());
-  const state$ = behaviorSubject<SidebarSnapshot>("plugin.pi-web-sidebar.state", latestSnapshot, context);
-  const selectedSession$ = behaviorSubject<SelectedSession | null>(
+  const state$: SubjectLike<SidebarSnapshot> = globalThis.piWeb.behaviorSubject("plugin.pi-web-sidebar.state", latestSnapshot);
+  const selectedSession$: SubjectLike<SelectedSession | null> = globalThis.piWeb.behaviorSubject(
     "plugin.pi-web-sidebar.selectedSession",
     resolveSelectedSession(latestSnapshot),
-    context,
   );
-  const events$ = subject<SidebarActionEvent>("plugin.pi-web-sidebar.event", context);
-  const api = {
-    state$,
-    selectedSession$,
-    events$,
-    refresh,
-    getSnapshot: (): SidebarSnapshot => latestSnapshot,
-  };
-  app.piWebSidebar = api;
+  const events$: SubjectLike<SidebarActionEvent> = globalThis.piWeb.subject("plugin.pi-web-sidebar.event");
 
   return {
     emitState(reason: string): void {
@@ -58,36 +47,8 @@ export function createSidebarBridge(
       state$.complete();
       selectedSession$.complete();
       events$.complete();
-
-      if (app.piWebSidebar === api) {
-        delete app.piWebSidebar;
-      }
     },
   };
-}
-
-function behaviorSubject<T>(name: string, initialValue: T, context: PluginContext): SubjectLike<T> {
-  if (globalThis.piWeb) {
-    return globalThis.piWeb.behaviorSubject(name, initialValue);
-  }
-
-  if (typeof context.rxjs?.BehaviorSubject === "function") {
-    return new context.rxjs.BehaviorSubject<T>(initialValue);
-  }
-
-  return new LocalSubject<T>(initialValue);
-}
-
-function subject<T>(name: string, context: PluginContext): SubjectLike<T> {
-  if (globalThis.piWeb) {
-    return globalThis.piWeb.subject(name);
-  }
-
-  if (typeof context.rxjs?.Subject === "function") {
-    return new context.rxjs.Subject<T>();
-  }
-
-  return new LocalSubject<T>();
 }
 
 function createSidebarSnapshot(
@@ -121,7 +82,7 @@ function resolveSelectedSession(snapshot: SidebarSnapshot): SelectedSession | nu
     return null;
   }
 
-  const workspace = snapshot.workspaces.find((candidate: SidebarWorkspace): boolean => {
+  const workspace: SidebarWorkspace | undefined = snapshot.workspaces.find((candidate: SidebarWorkspace): boolean => {
     return (candidate.sessions || []).some((session): boolean => session.id === snapshot.activeSessionId);
   });
 
@@ -143,32 +104,4 @@ function persistSelectedSession(selected: SelectedSession | null): void {
 
   storeString(ACTIVE_SESSION_KEY, selected.sessionId);
   storeString(ACTIVE_WORKSPACE_KEY, selected.workspaceId);
-}
-
-class LocalSubject<T> implements SubjectLike<T> {
-  private subscribers: ((value: T) => void)[] = [];
-  private value: T | undefined;
-
-  constructor(initialValue?: T) {
-    this.value = initialValue;
-  }
-
-  subscribe(callback: (value: T) => void): { unsubscribe(): void } {
-    this.subscribers.push(callback);
-
-    if (this.value !== undefined) {
-      callback(this.value);
-    }
-
-    return { unsubscribe: (): void => { this.subscribers = this.subscribers.filter((item) => item !== callback); } };
-  }
-
-  next(value: T): void {
-    this.value = value;
-    this.subscribers.forEach((callback: (nextValue: T) => void): void => callback(value));
-  }
-
-  complete(): void {
-    this.subscribers = [];
-  }
 }
