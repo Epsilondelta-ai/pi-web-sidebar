@@ -46,7 +46,7 @@ export function markSelectedSession(row: HTMLElement, app: AppElement): void {
 }
 
 export function workspaceHasActiveSession(workspace: SidebarWorkspace): boolean {
-  return (workspace.sessions || []).some((session: SidebarSession): boolean => !!(session.active || session.live));
+  return (workspace.sessions || []).some(sessionIsLive);
 }
 
 function createPluginWorkspaceGroup(workspace: SidebarWorkspace, app: AppElement): HTMLElement {
@@ -150,7 +150,7 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
 
 function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorkspace, app: AppElement): HTMLElement {
   const selected: boolean = session.id === app.dataset.activeSessionId;
-  const titleText: string = session.title || session.name || session.id;
+  const titleText: string = normalizeSessionTitle(session.title || session.name || session.id);
   const row: HTMLDivElement = document.createElement("div");
   row.className = ["session-row", selected && "active", selected && "selected", session.parentId && "child-session"]
     .filter(Boolean)
@@ -171,6 +171,7 @@ function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorks
 
 function createSessionMain(session: SidebarSession, workspaceId: string, titleText: string): HTMLElement {
   const main: HTMLButtonElement = document.createElement("button");
+  const dot: HTMLSpanElement = document.createElement("span");
   const title: HTMLSpanElement = document.createElement("span");
   const meta: HTMLSpanElement = document.createElement("span");
   main.type = "button";
@@ -178,13 +179,17 @@ function createSessionMain(session: SidebarSession, workspaceId: string, titleTe
   main.dataset.session = session.id;
   main.dataset.workspace = workspaceId;
   main.dataset.title = titleText;
+  dot.className = "dot session-indicator";
+  dot.classList.toggle("live", sessionIsLive(session));
+  dot.classList.toggle("unread", !sessionIsLive(session) && sessionIsUnread(session));
+  dot.setAttribute("aria-label", sessionIndicatorLabel(session));
+  dot.title = sessionIndicatorLabel(session);
   title.className = "title";
   title.textContent = titleText;
   meta.className = "meta";
   meta.textContent = sessionBadges(session).join(" · ");
   meta.hidden = !meta.textContent;
-  meta.classList.toggle("live", !!(session.live || session.active));
-  main.append(title, meta);
+  main.append(dot, title, meta);
   return main;
 }
 
@@ -237,11 +242,7 @@ function createNewSessionRow(workspaceId: string): HTMLElement {
 function sessionBadges(session: SidebarSession): string[] {
   const badges: string[] = [];
 
-  if (session.live || session.active || ["running", "thinking"].includes(session.status || "")) {
-    badges.push("live");
-  }
-
-  if (session.unreadCompleted || session.unread) {
+  if (sessionIsUnread(session)) {
     badges.push("unread");
   }
 
@@ -250,6 +251,30 @@ function sessionBadges(session: SidebarSession): string[] {
   }
 
   return badges;
+}
+
+function sessionIndicatorLabel(session: SidebarSession): string {
+  if (sessionIsLive(session)) {
+    return "session live";
+  }
+
+  if (sessionIsUnread(session)) {
+    return "session unread";
+  }
+
+  return "session idle";
+}
+
+function sessionIsLive(session: SidebarSession): boolean {
+  return !!(session.live || session.active || ["running", "thinking", "active", "live"].includes(session.status || ""));
+}
+
+function sessionIsUnread(session: SidebarSession): boolean {
+  return !!(session.unreadCompleted || session.unread);
+}
+
+function normalizeSessionTitle(title: string): string {
+  return title.length > 12 ? `${title.slice(0, 12)}...` : title;
 }
 
 function workspaceSessionCount(workspace: SidebarWorkspace): number {

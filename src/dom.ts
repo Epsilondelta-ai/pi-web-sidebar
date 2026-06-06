@@ -28,6 +28,12 @@ export function installFallbackDragStyles(): void {
     [data-pi-web-sidebar-drag-handle] {
       cursor: grab;
     }
+    [data-pi-web-sidebar-plugin] .session-indicator {
+      flex: 0 0 auto;
+    }
+    [data-pi-web-sidebar-plugin] .session-indicator.unread {
+      background: #f59e0b;
+    }
     [data-pi-web-sidebar-drag-handle]:active {
       cursor: grabbing;
     }

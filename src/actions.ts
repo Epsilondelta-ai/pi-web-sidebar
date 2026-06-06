@@ -5,7 +5,7 @@ import {
   deleteWorkspaceSessionList,
   renameSessionById,
 } from "./api";
-import { PLUGIN_PANEL_ATTR } from "./constants";
+import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
 import { collapseSidebarLayout, routeWorkspace } from "./layout";
 import { markSelectedSession } from "./render";
 import type { AppElement, PluginContext, SidebarBridge, SidebarWorkspace } from "./types";
@@ -183,11 +183,14 @@ async function handleSessionAction(
 
   if (action === "pick-session") {
     markSelectedSession(target, app);
+    persistSelectedSession(target);
     routeWorkspace(app);
-    sidebarBridge.emitEvent("pick-session", {
+    const detail: Record<string, unknown> = {
       sessionId: target.dataset.session || "",
       workspaceId: target.dataset.workspace || "",
-    });
+    };
+    sidebarBridge.emitEvent("session.selected", detail);
+    sidebarBridge.emitEvent("pick-session", detail);
     sidebarBridge.emitState("pick-session");
     return false;
   }
@@ -237,7 +240,7 @@ async function renameSidebarSession(context: PluginContext, row: Element | null)
   }
 
   const result = await renameSessionById(context, sessionId, title);
-  const nextTitle: string = result.session?.title || title;
+  const nextTitle: string = normalizeSessionTitle(result.session?.title || title);
   htmlRow.dataset.title = nextTitle;
   htmlRow.querySelector<HTMLElement>(".session-main")?.setAttribute("data-title", nextTitle);
 
@@ -267,6 +270,17 @@ async function deleteSidebarSession(context: PluginContext, app: AppElement, row
   if (app.dataset.activeSessionId === sessionId) {
     app.dataset.activeSessionId = "";
   }
+}
+
+function persistSelectedSession(target: HTMLElement): void {
+  try {
+    localStorage.setItem(ACTIVE_SESSION_KEY, target.dataset.session || "");
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, target.dataset.workspace || "");
+  } catch {}
+}
+
+function normalizeSessionTitle(title: string): string {
+  return title.length > 12 ? `${title.slice(0, 12)}...` : title;
 }
 
 function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {

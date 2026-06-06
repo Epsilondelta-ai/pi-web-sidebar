@@ -30,6 +30,11 @@ export type SidebarWorkspace = {
   sessions?: SidebarSession[];
 };
 
+export type SelectedSession = {
+  sessionId: string;
+  workspaceId: string;
+};
+
 export type SidebarSnapshot = {
   activeSessionId: string;
   activeWorkspaceId: string;
@@ -61,6 +66,12 @@ export type RxjsLike = {
   Subject?: SubjectConstructor;
 };
 
+export type PiWebRegistry = {
+  readonly version: string;
+  subject<T>(name: string): SubjectLike<T>;
+  behaviorSubject<T>(name: string, initialValue: T): SubjectLike<T>;
+};
+
 export type ApiOptions = RequestInit & {
   headers?: HeadersInit;
 };
@@ -78,6 +89,7 @@ export type PluginContext = {
 
 export type SidebarApi = {
   state$: SubjectLike<SidebarSnapshot>;
+  selectedSession$: SubjectLike<SelectedSession | null>;
   events$: SubjectLike<SidebarActionEvent>;
   refresh(): Promise<SidebarWorkspace[]>;
   getSnapshot(): SidebarSnapshot;
