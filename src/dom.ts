@@ -37,26 +37,14 @@ export function installFallbackDragStyles(): void {
     [data-pi-web-sidebar-drag-handle]:active {
       cursor: grabbing;
     }
-    .sb-expand-btn {
+    .pi-web-sidebar-toggle {
       align-items: center;
       justify-content: center;
-      position: fixed;
-      left: max(8px, env(safe-area-inset-left));
-      top: max(64px, env(safe-area-inset-top));
-      z-index: 1000;
-      width: 32px;
-      height: 32px;
-      border: 1px solid var(--border, rgba(148, 163, 184, 0.35));
-      border-radius: 999px;
-      background: var(--bg-2, #111827);
-      color: var(--fg-1, #f8fafc);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      flex: 0 0 auto;
+      min-width: 28px;
+      min-height: 28px;
       cursor: pointer;
       font: 18px/1 var(--font-mono, ui-monospace, monospace);
-    }
-    .sb-expand-btn:hover {
-      border-color: var(--accent, #7dd3fc);
-      color: var(--accent, #7dd3fc);
     }
     @media (max-width: 768px) {
       [data-pi-web-sidebar-plugin]:not([hidden]) {
