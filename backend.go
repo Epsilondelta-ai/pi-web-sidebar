@@ -16,6 +16,7 @@ import (
 )
 
 const gitCloneTimeout = 5 * time.Minute
+const workspaceCachePath = ".pi-web/pi-web-sidebar/workspaces.json"
 
 type request map[string]any
 
@@ -49,6 +50,10 @@ func main() {
 		result, err = createFolder(stringInput(data, "parent"), stringInput(data, "name"))
 	case "clone-workspace":
 		result, err = cloneWorkspace(stringInput(data, "parent"), stringInput(data, "gitUrl"), stringInput(data, "name"))
+	case "load-workspace-cache":
+		result, err = loadWorkspaceCache()
+	case "save-workspace-cache":
+		result, err = saveWorkspaceCache(data)
 	default:
 		err = fmt.Errorf("unknown method: %s", method)
 	}
@@ -178,6 +183,57 @@ func cloneWorkspace(parent, gitURL, name string) (folderInfo, error) {
 		return folderInfo{}, err
 	}
 	return folderInfo{Name: createdName, Path: path, DisplayPath: displayPath(path)}, nil
+}
+
+func loadWorkspaceCache() (request, error) {
+	path, err := workspaceCacheFile()
+	if err != nil {
+		return request{}, err
+	}
+
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return request{"workspaces": []any{}}, nil
+	}
+	if err != nil {
+		return request{}, err
+	}
+
+	var result request
+	if err := json.Unmarshal(data, &result); err != nil {
+		return request{}, err
+	}
+	return result, nil
+}
+
+func saveWorkspaceCache(data request) (request, error) {
+	path, err := workspaceCacheFile()
+	if err != nil {
+		return request{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return request{}, err
+	}
+
+	payload := request{"workspaces": data["workspaces"]}
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return request{}, err
+	}
+	encoded = append(encoded, '\n')
+
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return request{}, err
+	}
+	return request{"path": path}, nil
+}
+
+func workspaceCacheFile() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", errors.New("home directory not found")
+	}
+	return filepath.Join(home, workspaceCachePath), nil
 }
 
 func repoNameFromURL(value string) string {

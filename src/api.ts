@@ -1,91 +1,52 @@
-import type { ApiOptions, FolderListing, PluginContext, SessionRenameResponse, SidebarWorkspace } from "./types";
+import type { AppElement, FolderListing, PluginContext, SessionRenameResponse, SidebarWorkspace } from "./types";
 
-export async function loadWorkspaces(context: PluginContext): Promise<SidebarWorkspace[]> {
-  const result: unknown = await requestPiWeb(context, "/api/workspaces");
+export async function loadWorkspaces(context: PluginContext, app: AppElement): Promise<SidebarWorkspace[]> {
+  const directWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
 
-  if (!isRecord(result) || !Array.isArray(result.workspaces)) {
-    return [];
+  if (directWorkspaces.length > 0) {
+    await saveWorkspaceCache(context, directWorkspaces);
+    return directWorkspaces;
   }
 
-  return result.workspaces.filter(isSidebarWorkspace);
+  const cachedWorkspaces: SidebarWorkspace[] = await loadWorkspaceCache(context);
+  return cachedWorkspaces.length > 0 ? cachedWorkspaces : directWorkspaces;
 }
 
-export function openWorkspacePath(context: PluginContext, path: string): Promise<unknown> {
-  return requestPiWeb(context, "/api/workspaces/open", {
-    method: "POST",
-    body: JSON.stringify({ path }),
-  });
-}
-
-export function deleteWorkspaceById(context: PluginContext, workspaceId?: string): Promise<unknown> | undefined {
+export async function deleteWorkspaceById(app: AppElement, workspaceId?: string): Promise<void> {
   if (!workspaceId) {
-    return undefined;
+    return;
   }
 
-  return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
+  await app.deleteWorkspace?.(workspaceId);
 }
 
-export function createWorkspaceSession(context: PluginContext, workspaceId?: string): Promise<unknown> | undefined {
+export async function createWorkspaceSession(app: AppElement, workspaceId?: string): Promise<void> {
   if (!workspaceId) {
-    return undefined;
+    return;
   }
 
-  return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`, { method: "POST" });
+  await app.newSession?.(workspaceId);
 }
 
-export function deleteWorkspaceSessionList(context: PluginContext, workspaceId?: string): Promise<unknown> | undefined {
+export async function deleteWorkspaceSessionList(app: AppElement, workspaceId?: string): Promise<void> {
   if (!workspaceId) {
-    return undefined;
+    return;
   }
 
-  return requestPiWeb(context, `/api/workspaces/${encodeURIComponent(workspaceId)}/sessions`, { method: "DELETE" });
+  await app.deleteWorkspaceSessions?.(workspaceId);
 }
 
-export async function renameSessionById(
-  context: PluginContext,
-  sessionId: string,
-  title: string,
-): Promise<SessionRenameResponse> {
-  const result: unknown = await requestPiWeb(context, `/api/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ title }),
-  });
-
-  return isRecord(result) ? { session: isRecord(result.session) ? { title: asString(result.session.title) } : undefined } : {};
+export async function renameSessionById(app: AppElement, sessionId: string): Promise<SessionRenameResponse> {
+  await app.renameSession?.(sessionId);
+  return {};
 }
 
-export function deleteSessionById(context: PluginContext, sessionId: string): Promise<unknown> {
-  return requestPiWeb(context, `/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+export async function deleteSessionById(app: AppElement, sessionId: string): Promise<void> {
+  await app.deleteSession?.(sessionId);
 }
 
-export async function requestPiWeb(context: PluginContext, path: string, options: ApiOptions = {}): Promise<unknown> {
-  if (typeof context.apiRequest === "function") {
-    return context.apiRequest(path, options);
-  }
-
-  const response: Response = await fetch(`${apiBase()}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-
-  if (response.status === 204) {
-    return {};
-  }
-
-  const body: string = await response.text();
-
-  if (!body.trim()) {
-    return {};
-  }
-
-  return JSON.parse(body) as unknown;
+export async function openWorkspacePath(app: AppElement, path: string): Promise<void> {
+  await app.openWorkspacePath?.(path);
 }
 
 export async function loadFolders(context: PluginContext, path: string): Promise<FolderListing> {
@@ -108,25 +69,30 @@ export async function callBackend(context: PluginContext, method: string, data: 
   return context.backend?.(method, { data });
 }
 
-function apiBase(): string {
-  if (globalThis.PI_WEB_API_BASE !== undefined) {
-    return String(globalThis.PI_WEB_API_BASE);
+export async function saveWorkspaceCache(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<void> {
+  if (workspaces.length === 0) {
+    return;
   }
 
-  return "";
+  await context.backend?.("save-workspace-cache", { data: { workspaces } });
 }
 
-async function responseErrorMessage(response: Response): Promise<string> {
-  let message: string = `${response.status} ${response.statusText}`;
+function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWorkspace[] {
+  if (Array.isArray(app.workspaceList)) {
+    return app.workspaceList.filter(isSidebarWorkspace);
+  }
 
-  try {
-    const body: unknown = await response.json();
-    if (isRecord(body) && typeof body.error === "string") {
-      message = body.error;
-    }
-  } catch {}
+  return Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces.filter(isSidebarWorkspace) : [];
+}
 
-  return message;
+async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorkspace[]> {
+  const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
+
+  if (!isRecord(result) || !Array.isArray(result.workspaces)) {
+    return [];
+  }
+
+  return result.workspaces.filter(isSidebarWorkspace);
 }
 
 function isSidebarWorkspace(value: unknown): value is SidebarWorkspace {

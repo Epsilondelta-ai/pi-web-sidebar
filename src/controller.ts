@@ -152,7 +152,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     try {
-      const nextWorkspaces: SidebarWorkspace[] = await loadWorkspaces(context);
+      const nextWorkspaces: SidebarWorkspace[] = await loadWorkspaces(context, app);
 
       if (sequence !== refreshSequence) {
         return workspaces;

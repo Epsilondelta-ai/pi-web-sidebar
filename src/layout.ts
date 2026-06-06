@@ -90,13 +90,13 @@ function mountSidebarToggleButton(button: HTMLElement, host: HTMLElement): void 
 function findHeaderToggleHost(app: AppElement): HTMLElement {
   return headerFromToolbar(app.querySelector("[data-plugin-toolbar]"))
     || headerFromToolbar(document.querySelector("[data-plugin-toolbar]"))
-    || app.querySelector(".topbar")
-    || document.querySelector<HTMLElement>(".topbar")
+    || app.querySelector("header.topbar")
+    || document.querySelector<HTMLElement>("header.topbar")
     || app;
 }
 
 function headerFromToolbar(toolbar: Element | null): HTMLElement | null {
-  return toolbar?.closest(".topbar") as HTMLElement | null;
+  return toolbar?.closest("header.topbar") as HTMLElement | null;
 }
 
 function findSidebarToggleButton(app: AppElement): HTMLElement | null {
