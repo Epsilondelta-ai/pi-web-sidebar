@@ -4,7 +4,7 @@ import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
 import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
-import { applySidebarGrid, bindResizer, bindSidebarToggleViewport, restoreSidebarLayout } from "./layout";
+import { applySidebarGrid, bindHeaderSidebarToggle, bindResizer, restoreSidebarLayout } from "./layout";
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { readStoredObject, storeJson } from "./storage";
@@ -55,7 +55,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     renderCurrentWorkspaces();
     restoreSidebarLayout(app);
     sidebarToggleCleanup?.();
-    sidebarToggleCleanup = bindSidebarToggleViewport(app);
+    sidebarToggleCleanup = bindHeaderSidebarToggle(app);
     sidebarBridge.emitState("mounted");
     void refreshCurrentWorkspaces();
   }

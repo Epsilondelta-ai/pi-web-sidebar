@@ -204,36 +204,6 @@ function requireElement<T extends Element = HTMLElement>(root: ParentNode, selec
   return element;
 }
 
-function setMobileViewport(matches: boolean): void {
-  const listeners: Set<(event: MediaQueryListEvent) => void> = new Set();
-  const media: MediaQueryList = {
-    matches,
-    media: "(max-width: 768px)",
-    onchange: null,
-    addEventListener: (_type: string, listener: EventListenerOrEventListenerObject): void => {
-      if (typeof listener === "function") {
-        listeners.add(listener as (event: MediaQueryListEvent) => void);
-      }
-    },
-    removeEventListener: (_type: string, listener: EventListenerOrEventListenerObject): void => {
-      if (typeof listener === "function") {
-        listeners.delete(listener as (event: MediaQueryListEvent) => void);
-      }
-    },
-    addListener: (listener: (event: MediaQueryListEvent) => void): void => {
-      listeners.add(listener);
-    },
-    removeListener: (listener: (event: MediaQueryListEvent) => void): void => {
-      listeners.delete(listener);
-    },
-    dispatchEvent: (): boolean => true,
-  } as unknown as MediaQueryList;
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true,
-    value: (): MediaQueryList => media,
-  });
-}
-
 function deferred<T>(): Deferred<T> {
   let resolveDeferred: ((value: T) => void) | undefined;
   const promise: Promise<T> = new Promise((resolve: (value: T) => void): void => {
@@ -357,12 +327,25 @@ describe("pi-web-sidebar plugin", () => {
     expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
 
     expect(pluginSidebar.hidden).toBe(false);
-    expect(expand.style.display).toBe("none");
+    expect(expand.style.display).toBe("inline-flex");
+    expect(expand.getAttribute("aria-label")).toBe("collapse sidebar");
   });
 
-  test("mobile viewport keeps a sidebar toggle visible while open", () => {
+  test("header sidebar toggle stays visible while open", () => {
     const app = setupApp();
-    setMobileViewport(true);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const pluginSidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
+    const expand = requireElement<HTMLButtonElement>(app, "[data-pi-web-sidebar-toggle]");
+    expect(pluginSidebar.hidden).toBe(false);
+    expect(expand.style.display).toBe("inline-flex");
+    expect(expand.getAttribute("aria-label")).toBe("collapse sidebar");
+  });
+
+  test("header sidebar toggle closes and reopens the sidebar", () => {
+    const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
