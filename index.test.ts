@@ -477,6 +477,29 @@ describe("pi-web-sidebar plugin", () => {
     expect(body.style.gridTemplateColumns).toBe("280px 1fr");
   });
 
+  test("places sidebar left when host pins main content to the first grid column", async () => {
+    const app = setupApp();
+    const main: HTMLElement = document.createElement("main");
+    main.className = "main";
+    main.dataset.main = "";
+    main.style.gridColumn = "1";
+    const tree: HTMLElement = document.createElement("aside");
+    tree.className = "tree";
+    tree.dataset.pluginSidebar = "";
+    tree.style.gridColumn = "2";
+    app.dataset.tree = "on";
+    requireElement(app, ".app-body").append(main, tree);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const sidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
+    expect(requireElement<HTMLElement>(app, ".app-body").style.gridTemplateColumns).toBe("280px 1fr 320px");
+    expect(sidebar.style.gridColumn).toBe("1");
+    expect(main.style.gridColumn).toBe("2");
+    expect(tree.style.gridColumn).toBe("3");
+  });
+
   test("exposes RxJS sidebar state and events for other plugins", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];

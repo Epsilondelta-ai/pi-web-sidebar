@@ -117,6 +117,28 @@ export function applySidebarGrid(app: AppElement, width: number = Number(app.dat
   const expandedColumns: string = tree ? `${width}px 1fr ${treeWidth}px` : `${width}px 1fr`;
   const collapsedColumns: string = tree ? `1fr ${treeWidth}px` : "1fr";
   body.style.gridTemplateColumns = collapsed ? collapsedColumns : expandedColumns;
+  placeSidebarGridChildren(app, collapsed, tree);
+}
+
+function placeSidebarGridChildren(app: AppElement, collapsed: boolean, tree: boolean): void {
+  const sidebar: HTMLElement | null = app.querySelector(`[${PLUGIN_PANEL_ATTR}]`);
+  const main: HTMLElement | null = app.querySelector(".app-body > [data-main], .app-body > main.main");
+  const pluginTree: HTMLElement | null = app.querySelector(".app-body > [data-plugin-sidebar], .app-body > aside.tree");
+
+  if (sidebar) {
+    sidebar.style.gridColumn = collapsed ? "" : "1";
+    sidebar.style.gridRow = collapsed ? "" : "1";
+  }
+
+  if (main) {
+    main.style.gridColumn = collapsed ? "1" : "2";
+    main.style.gridRow = "1";
+  }
+
+  if (pluginTree) {
+    pluginTree.style.gridColumn = tree ? (collapsed ? "2" : "3") : "";
+    pluginTree.style.gridRow = tree ? "1" : "";
+  }
 }
 
 export function bindResizer(wrap: HTMLElement, app: AppElement, sidebarBridge: SidebarBridge): () => void {
