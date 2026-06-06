@@ -2,6 +2,8 @@ import { PLUGIN_PANEL_ATTR, SIDEBAR_COLLAPSED_KEY, SIDEBAR_WIDTH_KEY } from "./c
 import { storeString } from "./storage";
 import type { AppElement, SidebarBridge } from "./types";
 
+const MOBILE_SIDEBAR_QUERY = "(max-width: 768px)";
+
 export function routePicker(app: AppElement): void {
   app.dataset.route = "picker";
   app.querySelector('[data-view="picker"]')?.removeAttribute("hidden");
@@ -28,15 +30,37 @@ export function restoreSidebarLayout(app: AppElement): void {
   }
 }
 
+export function bindSidebarToggleViewport(app: AppElement): () => void {
+  const media: MediaQueryList | undefined = window.matchMedia?.(MOBILE_SIDEBAR_QUERY);
+  const update = (): void => syncSidebarToggleButton(app);
+  media?.addEventListener?.("change", update);
+  window.addEventListener("resize", update);
+  update();
+
+  return (): void => {
+    media?.removeEventListener?.("change", update);
+    window.removeEventListener("resize", update);
+    app.querySelector(".sb-expand-btn")?.remove();
+  };
+}
+
 export function collapseSidebarLayout(app: AppElement, collapsed: boolean): void {
   app.dataset.sidebar = collapsed ? "collapsed" : "open";
   app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)?.toggleAttribute("hidden", collapsed);
 
-  const expand: HTMLElement = ensureSidebarExpandButton(app);
-  expand.style.display = collapsed ? "inline-flex" : "none";
-
+  syncSidebarToggleButton(app);
   storeString(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
   applySidebarGrid(app);
+}
+
+function syncSidebarToggleButton(app: AppElement): void {
+  const collapsed: boolean = app.dataset.sidebar === "collapsed";
+  const expand: HTMLElement = ensureSidebarExpandButton(app);
+  const label: string = collapsed ? "expand sidebar" : "collapse sidebar";
+  expand.setAttribute("aria-label", label);
+  expand.title = label;
+  expand.textContent = collapsed ? "›" : "‹";
+  expand.style.display = collapsed || isMobileSidebarViewport() ? "inline-flex" : "none";
 }
 
 function ensureSidebarExpandButton(app: AppElement): HTMLElement {
@@ -49,13 +73,14 @@ function ensureSidebarExpandButton(app: AppElement): HTMLElement {
   const expand: HTMLButtonElement = document.createElement("button");
   expand.type = "button";
   expand.className = "sb-expand-btn";
-  expand.setAttribute("aria-label", "expand sidebar");
-  expand.title = "expand sidebar";
-  expand.textContent = "›";
   expand.style.display = "none";
-  expand.addEventListener("click", (): void => collapseSidebarLayout(app, false));
+  expand.addEventListener("click", (): void => collapseSidebarLayout(app, app.dataset.sidebar !== "collapsed"));
   app.append(expand);
   return expand;
+}
+
+function isMobileSidebarViewport(): boolean {
+  return window.matchMedia?.(MOBILE_SIDEBAR_QUERY).matches || false;
 }
 
 export function applySidebarGrid(app: AppElement, width: number = Number(app.dataset.sidebarWidth || 280)): void {
