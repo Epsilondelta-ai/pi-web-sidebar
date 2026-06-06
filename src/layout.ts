@@ -49,9 +49,14 @@ function syncSidebarToggleButton(app: AppElement): void {
   const collapsed: boolean = app.dataset.sidebar === "collapsed";
   const expand: HTMLElement = ensureSidebarExpandButton(app);
   const label: string = collapsed ? "expand sidebar" : "collapse sidebar";
+  const text: string = collapsed ? "›" : "‹";
   expand.setAttribute("aria-label", label);
   expand.title = label;
-  expand.textContent = collapsed ? "›" : "‹";
+
+  if (expand.textContent !== text) {
+    expand.textContent = text;
+  }
+
   expand.style.display = "inline-flex";
 }
 
@@ -83,7 +88,15 @@ function mountSidebarToggleButton(button: HTMLElement, host: HTMLElement): void 
 }
 
 function findHeaderToggleHost(app: AppElement): HTMLElement {
-  return app.querySelector(".topbar") || document.querySelector<HTMLElement>(".topbar") || app;
+  return headerFromToolbar(app.querySelector("[data-plugin-toolbar]"))
+    || headerFromToolbar(document.querySelector("[data-plugin-toolbar]"))
+    || app.querySelector(".topbar")
+    || document.querySelector<HTMLElement>(".topbar")
+    || app;
+}
+
+function headerFromToolbar(toolbar: Element | null): HTMLElement | null {
+  return toolbar?.closest(".topbar") as HTMLElement | null;
 }
 
 function findSidebarToggleButton(app: AppElement): HTMLElement | null {
