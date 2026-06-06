@@ -16,6 +16,7 @@ import (
 )
 
 const gitCloneTimeout = 5 * time.Minute
+const piStatusTimeout = 5 * time.Second
 const workspaceCachePath = ".pi-web/pi-web-sidebar/workspaces.json"
 
 type request map[string]any
@@ -31,6 +32,14 @@ type folderInfo struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	DisplayPath string `json:"displayPath"`
+}
+
+type piStatus struct {
+	Available  bool   `json:"available"`
+	CheckedAt  string `json:"checkedAt"`
+	Executable string `json:"executable,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 func main() {
@@ -54,6 +63,8 @@ func main() {
 		result, err = loadWorkspaceCache()
 	case "save-workspace-cache":
 		result, err = saveWorkspaceCache(data)
+	case "pi-status":
+		result, err = checkPiStatus()
 	default:
 		err = fmt.Errorf("unknown method: %s", method)
 	}
@@ -183,6 +194,57 @@ func cloneWorkspace(parent, gitURL, name string) (folderInfo, error) {
 		return folderInfo{}, err
 	}
 	return folderInfo{Name: createdName, Path: path, DisplayPath: displayPath(path)}, nil
+}
+
+func checkPiStatus() (piStatus, error) {
+	checkedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	executable, err := resolvePiExecutable()
+	if err != nil {
+		return piStatus{Available: false, CheckedAt: checkedAt, Error: err.Error()}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), piStatusTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, executable, "--version")
+	output, err := cmd.CombinedOutput()
+	version := firstOutputLine(output)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return piStatus{Available: false, CheckedAt: checkedAt, Executable: executable, Error: "pi --version timed out"}, nil
+		}
+
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
+		return piStatus{Available: false, CheckedAt: checkedAt, Executable: executable, Version: version, Error: message}, nil
+	}
+
+	return piStatus{Available: true, CheckedAt: checkedAt, Executable: executable, Version: version}, nil
+}
+
+func resolvePiExecutable() (string, error) {
+	configured := strings.TrimSpace(os.Getenv("PI_BIN"))
+	if configured != "" {
+		return configured, nil
+	}
+
+	executable, err := exec.LookPath("pi")
+	if err != nil {
+		return "", errors.New("pi executable not found")
+	}
+	return executable, nil
+}
+
+func firstOutputLine(output []byte) string {
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		clean := strings.TrimSpace(line)
+		if clean != "" {
+			return clean
+		}
+	}
+	return ""
 }
 
 func loadWorkspaceCache() (request, error) {

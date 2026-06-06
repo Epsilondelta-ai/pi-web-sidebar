@@ -1,4 +1,4 @@
-import type { AppElement, FolderListing, PluginContext, SessionRenameResponse, SidebarWorkspace } from "./types";
+import type { AppElement, FolderListing, PiStatus, PluginContext, SessionRenameResponse, SidebarWorkspace } from "./types";
 
 export async function loadWorkspaces(context: PluginContext, app: AppElement): Promise<SidebarWorkspace[]> {
   const directWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
@@ -69,6 +69,22 @@ export async function callBackend(context: PluginContext, method: string, data: 
   return context.backend?.(method, { data });
 }
 
+export async function loadPiStatus(context: PluginContext): Promise<PiStatus> {
+  const result: unknown = await context.backend?.("pi-status", { data: {} });
+
+  if (!isRecord(result)) {
+    return unavailablePiStatus("pi status backend unavailable");
+  }
+
+  return {
+    available: result.available === true,
+    checkedAt: asString(result.checkedAt) || new Date().toISOString(),
+    executable: asString(result.executable),
+    version: asString(result.version),
+    error: asString(result.error),
+  };
+}
+
 export async function saveWorkspaceCache(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<void> {
   if (workspaces.length === 0) {
     return;
@@ -105,6 +121,10 @@ function isFolderEntry(value: unknown): value is { name?: string; path: string; 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function unavailablePiStatus(error: string): PiStatus {
+  return { available: false, checkedAt: new Date().toISOString(), error };
 }
 
 function asString(value: unknown): string | undefined {

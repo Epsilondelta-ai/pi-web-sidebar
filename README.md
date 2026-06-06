@@ -36,15 +36,16 @@ creates and mounts its own `.sidebar-wrap` there and owns the workspace/session 
 hide, or restore any native pi-web sidebar.
 
 The `+ open` button is implemented inside this plugin: frontend opens a custom folder picker, calls `backend.js` with
-`list-folders`, `create-folder`, or `clone-workspace`, `backend.js` executes the prebuilt Go binary, then the frontend
-opens the selected path through pi-web's HTTP workspace API. The backend wrapper currently supports Linux/macOS on
-amd64/arm64; unsupported platforms fail fast with the expected binary path. Workspace refresh, create/delete session,
-delete workspace, sidebar resize/collapse, and reorder persistence are handled by this plugin without calling host app
-methods.
+`list-folders`, `create-folder`, or `clone-workspace`, then `backend.js` executes the prebuilt Go binary. The backend
+also handles `pi-status` by resolving `PI_BIN` or `pi` on `PATH` and running `pi --version` directly. The backend wrapper
+currently supports Linux/macOS on amd64/arm64; unsupported platforms fail fast with the expected binary path. Workspace
+refresh, sidebar resize/collapse, and reorder persistence are handled by this plugin; workspace/session mutations use
+host app methods when provided.
 
-When pi-web provides the shared `piWeb` Subject registry, the plugin publishes `plugin.pi-web-sidebar.state`,
-`plugin.pi-web-sidebar.selectedSession`, and `plugin.pi-web-sidebar.event`. Plugins should consume those channels through
-`globalThis.piWeb`.
+The plugin exposes RxJS channels through `globalThis.piWebSidebar.channels` for sidebar state, pi status, selected
+session, and events. When pi-web provides the shared `piWeb` Subject registry, the plugin mirrors state to
+`plugin.pi-web-sidebar.state`, `plugin.pi-web-sidebar.piStatus`, `plugin.pi-web-sidebar.selectedSession`, and
+`plugin.pi-web-sidebar.event`.
 
 Build the browser plugin with:
 

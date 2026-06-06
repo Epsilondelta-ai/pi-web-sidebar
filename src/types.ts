@@ -1,3 +1,5 @@
+import type { BehaviorSubject, Subject } from "rxjs";
+
 export type SidebarMode = "open" | "collapsed";
 
 export type SidebarActionEvent = {
@@ -35,12 +37,21 @@ export type SelectedSession = {
   workspaceId: string;
 };
 
+export type PiStatus = {
+  available: boolean;
+  checkedAt: string;
+  executable?: string;
+  version?: string;
+  error?: string;
+};
+
 export type SidebarSnapshot = {
   activeSessionId: string;
   activeWorkspaceId: string;
   collapsed: boolean;
   element: HTMLElement | null;
   openWorkspaceId: string;
+  piStatus: PiStatus;
   sessionCount: number;
   sidebar: SidebarMode;
   width: number;
@@ -87,9 +98,21 @@ export type AppElement = HTMLElement & {
   deleteSession?: (sessionId: string) => Promise<void>;
 };
 
+export type SidebarRxChannels = {
+  state$: BehaviorSubject<SidebarSnapshot>;
+  piStatus$: BehaviorSubject<PiStatus>;
+  selectedSession$: BehaviorSubject<SelectedSession | null>;
+  events$: Subject<SidebarActionEvent>;
+};
+
+export type PiWebSidebarGlobal = {
+  channels: SidebarRxChannels;
+};
+
 export type SidebarBridge = {
   emitState(reason: string): void;
   emitEvent(type: string, detail?: Record<string, unknown>): void;
+  updatePiStatus(status: PiStatus, reason: string): void;
   dispose(): void;
 };
 

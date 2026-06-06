@@ -3,3 +3,4 @@ node_modules/
 .rezero/memory/
 .pi/npm
 .pi/pi-web.json
+.pi/sessions/
