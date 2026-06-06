@@ -64,25 +64,27 @@ export type PiWebRegistry = {
   behaviorSubject<T>(name: string, initialValue: T): SubjectLike<T>;
 };
 
-export type ApiOptions = RequestInit & {
-  headers?: HeadersInit;
-};
-
 export type BackendCall = (method: string, input: { workspaceId?: string; data?: Record<string, unknown> }) => Promise<unknown>;
-export type ApiRequest = (path: string, options?: ApiOptions) => Promise<unknown>;
 
 export type PluginContext = {
   app?: AppElement;
   initialWorkspaces?: SidebarWorkspace[];
   backend?: BackendCall;
-  apiRequest?: ApiRequest;
 };
 
 export type AppElement = HTMLElement & {
+  workspaceList?: SidebarWorkspace[];
   sidebarOpenWorkspaceId?: string;
   sidebarSortableCleanup?: () => void;
   sidebarSortableRoot?: { unmount?: () => void };
   sidebarSortableRenderToken?: unknown;
+  refreshWorkspaces?: (options?: { quiet?: boolean }) => Promise<void>;
+  openWorkspacePath?: (path: string) => Promise<void>;
+  deleteWorkspace?: (workspaceId: string) => Promise<void>;
+  deleteWorkspaceSessions?: (workspaceId: string) => Promise<void>;
+  newSession?: (workspaceId: string) => Promise<void>;
+  renameSession?: (sessionId: string) => Promise<void>;
+  deleteSession?: (sessionId: string) => Promise<void>;
 };
 
 export type SidebarBridge = {

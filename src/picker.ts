@@ -1,4 +1,4 @@
-import { callBackend, loadFolders, openWorkspacePath } from "./api";
+import { callBackend, loadFolders, openWorkspacePath, saveWorkspaceCache } from "./api";
 import { routePicker, routeWorkspace } from "./layout";
 import { pickerMarkup } from "./picker-markup";
 import { renderWorkspacePickerRows } from "./picker-rows";
@@ -357,8 +357,9 @@ async function openPickedWorkspace(
     return;
   }
 
-  await openWorkspacePath(context, path);
-  await refreshWorkspaces();
+  await openWorkspacePath(app, path);
+  const workspaces: SidebarWorkspace[] = await refreshWorkspaces();
+  await saveWorkspaceCache(context, workspaces);
   routeWorkspace(app);
   const picker: HTMLElement | null = app.querySelector("[data-pi-web-sidebar-picker]");
 

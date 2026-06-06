@@ -112,11 +112,11 @@ async function handleMutatingWorkspaceAction(
   sidebarBridge: SidebarBridge,
 ): Promise<boolean> {
   if (action === "delete-workspace") {
-    return deleteWorkspaceAction(target, context, refreshWorkspaces, sidebarBridge);
+    return deleteWorkspaceAction(target, app, refreshWorkspaces, sidebarBridge);
   }
 
   if (action === "new-session") {
-    await createWorkspaceSession(context, target.dataset.workspace);
+    await createWorkspaceSession(app, target.dataset.workspace);
     await refreshWorkspaces();
     sidebarBridge.emitEvent("new-session", { workspaceId: target.dataset.workspace || "" });
     return true;
@@ -124,7 +124,7 @@ async function handleMutatingWorkspaceAction(
 
   if (action === "delete-workspace-sessions") {
     const workspaceId: string | undefined = target.dataset.workspace;
-    await deleteWorkspaceSessionList(context, workspaceId);
+    await deleteWorkspaceSessionList(app, workspaceId);
     await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
     sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: workspaceId || "" });
     return true;
@@ -134,12 +134,12 @@ async function handleMutatingWorkspaceAction(
 }
 async function deleteWorkspaceAction(
   target: HTMLElement,
-  context: PluginContext,
+  app: AppElement,
   refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
 ): Promise<boolean> {
   if (confirm(`Remove workspace ${target.dataset.workspace} from this view?`)) {
-    await deleteWorkspaceById(context, target.dataset.workspace);
+    await deleteWorkspaceById(app, target.dataset.workspace);
     await refreshWorkspaces({ allowEmpty: true });
     sidebarBridge.emitEvent("delete-workspace", { workspaceId: target.dataset.workspace || "" });
   }
@@ -168,14 +168,15 @@ async function handleSessionAction(
   }
 
   if (action === "rename-session") {
-    await renameSidebarSession(context, target.closest(".session-row"));
+    await renameSidebarSession(app, target.closest(".session-row"));
+    await refreshWorkspaces();
     sidebarBridge.emitEvent("rename-session", { sessionId: target.closest<HTMLElement>(".session-row")?.dataset.session || "" });
     sidebarBridge.emitState("rename-session");
     return true;
   }
 
   if (action === "delete-session") {
-    await deleteSidebarSession(context, app, target.closest(".session-row"));
+    await deleteSidebarSession(app, target.closest(".session-row"));
     await refreshWorkspaces();
     sidebarBridge.emitEvent("delete-session", { sessionId: target.closest<HTMLElement>(".session-row")?.dataset.session || "" });
     return true;
@@ -222,7 +223,7 @@ function closeSessionMenus(app: AppElement, except?: HTMLElement): void {
   });
 }
 
-async function renameSidebarSession(context: PluginContext, row: Element | null): Promise<void> {
+async function renameSidebarSession(app: AppElement, row: Element | null): Promise<void> {
   if (!row) {
     return;
   }
@@ -233,23 +234,10 @@ async function renameSidebarSession(context: PluginContext, row: Element | null)
     return;
   }
 
-  const title: string | undefined = prompt("Rename session", htmlRow.dataset.title || "")?.trim();
-  if (!title) {
-    return;
-  }
-
-  const result = await renameSessionById(context, sessionId, title);
-  const nextTitle: string = normalizeSessionTitle(result.session?.title || title);
-  htmlRow.dataset.title = nextTitle;
-  htmlRow.querySelector<HTMLElement>(".session-main")?.setAttribute("data-title", nextTitle);
-
-  const label: HTMLElement | null = htmlRow.querySelector(".title");
-  if (label) {
-    label.textContent = nextTitle;
-  }
+  await renameSessionById(app, sessionId);
 }
 
-async function deleteSidebarSession(context: PluginContext, app: AppElement, row: Element | null): Promise<void> {
+async function deleteSidebarSession(app: AppElement, row: Element | null): Promise<void> {
   if (!row) {
     return;
   }
@@ -265,7 +253,7 @@ async function deleteSidebarSession(context: PluginContext, app: AppElement, row
     return;
   }
 
-  await deleteSessionById(context, sessionId);
+  await deleteSessionById(app, sessionId);
   if (app.dataset.activeSessionId === sessionId) {
     app.dataset.activeSessionId = "";
   }
@@ -276,10 +264,6 @@ function persistSelectedSession(target: HTMLElement): void {
     localStorage.setItem(ACTIVE_SESSION_KEY, target.dataset.session || "");
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, target.dataset.workspace || "");
   } catch {}
-}
-
-function normalizeSessionTitle(title: string): string {
-  return title.length > 12 ? `${title.slice(0, 12)}...` : title;
 }
 
 function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {
