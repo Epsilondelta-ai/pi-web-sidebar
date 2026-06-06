@@ -2,8 +2,6 @@ import { PLUGIN_PANEL_ATTR, SIDEBAR_COLLAPSED_KEY, SIDEBAR_WIDTH_KEY } from "./c
 import { storeString } from "./storage";
 import type { AppElement, SidebarBridge } from "./types";
 
-const MOBILE_SIDEBAR_QUERY = "(max-width: 768px)";
-
 export function routePicker(app: AppElement): void {
   app.dataset.route = "picker";
   app.querySelector('[data-view="picker"]')?.removeAttribute("hidden");
@@ -30,16 +28,10 @@ export function restoreSidebarLayout(app: AppElement): void {
   }
 }
 
-export function bindSidebarToggleViewport(app: AppElement): () => void {
-  const media: MediaQueryList | undefined = window.matchMedia?.(MOBILE_SIDEBAR_QUERY);
-  const update = (): void => syncSidebarToggleButton(app);
-  media?.addEventListener?.("change", update);
-  window.addEventListener("resize", update);
-  update();
+export function bindHeaderSidebarToggle(app: AppElement): () => void {
+  syncSidebarToggleButton(app);
 
   return (): void => {
-    media?.removeEventListener?.("change", update);
-    window.removeEventListener("resize", update);
     app.querySelector("[data-pi-web-sidebar-toggle]")?.remove();
   };
 }
@@ -60,7 +52,7 @@ function syncSidebarToggleButton(app: AppElement): void {
   expand.setAttribute("aria-label", label);
   expand.title = label;
   expand.textContent = collapsed ? "›" : "‹";
-  expand.style.display = collapsed || isMobileSidebarViewport() ? "inline-flex" : "none";
+  expand.style.display = "inline-flex";
 }
 
 function ensureSidebarExpandButton(app: AppElement): HTMLElement {
@@ -88,10 +80,6 @@ function mountSidebarToggleButton(button: HTMLElement, host: HTMLElement): void 
   }
 
   host.insertBefore(button, host.firstElementChild);
-}
-
-function isMobileSidebarViewport(): boolean {
-  return window.matchMedia?.(MOBILE_SIDEBAR_QUERY).matches || false;
 }
 
 export function applySidebarGrid(app: AppElement, width: number = Number(app.dataset.sidebarWidth || 280)): void {
