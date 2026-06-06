@@ -32,7 +32,7 @@ export function bindHeaderSidebarToggle(app: AppElement): () => void {
   syncSidebarToggleButton(app);
 
   return (): void => {
-    app.querySelector("[data-pi-web-sidebar-toggle]")?.remove();
+    findSidebarToggleButton(app)?.remove();
   };
 }
 
@@ -56,8 +56,8 @@ function syncSidebarToggleButton(app: AppElement): void {
 }
 
 function ensureSidebarExpandButton(app: AppElement): HTMLElement {
-  const host: HTMLElement = app.querySelector(".topbar") || app;
-  const existing: HTMLElement | null = app.querySelector("[data-pi-web-sidebar-toggle]");
+  const host: HTMLElement = findHeaderToggleHost(app);
+  const existing: HTMLElement | null = findSidebarToggleButton(app);
 
   if (existing) {
     mountSidebarToggleButton(existing, host);
@@ -80,6 +80,14 @@ function mountSidebarToggleButton(button: HTMLElement, host: HTMLElement): void 
   }
 
   host.insertBefore(button, host.firstElementChild);
+}
+
+function findHeaderToggleHost(app: AppElement): HTMLElement {
+  return app.querySelector(".topbar") || document.querySelector<HTMLElement>(".topbar") || app;
+}
+
+function findSidebarToggleButton(app: AppElement): HTMLElement | null {
+  return app.querySelector("[data-pi-web-sidebar-toggle]") || document.querySelector<HTMLElement>("[data-pi-web-sidebar-toggle]");
 }
 
 export function applySidebarGrid(app: AppElement, width: number = Number(app.dataset.sidebarWidth || 280)): void {

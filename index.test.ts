@@ -309,6 +309,28 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement(app, "[data-workspace-group='w2'] .label").textContent).toBe("two");
   });
 
+  test("mounts the sidebar toggle into the document topbar when app does not contain the header", () => {
+    const app = setupApp();
+    const internalTopbar = requireElement<HTMLElement>(app, ".topbar");
+    const externalTopbar = document.createElement("header");
+    internalTopbar.remove();
+    externalTopbar.className = "topbar";
+    externalTopbar.innerHTML = '<span class="brand">pi/web</span>';
+    document.body.insertBefore(externalTopbar, app);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const expand = requireElement<HTMLButtonElement>(document, "[data-pi-web-sidebar-toggle]");
+    expect(expand.parentElement).toBe(externalTopbar);
+    expect(externalTopbar.firstElementChild).toBe(expand);
+    expect(expand.style.display).toBe("inline-flex");
+
+    controller.dispose();
+
+    expect(document.querySelector("[data-pi-web-sidebar-toggle]")).toBeFalsy();
+  });
+
   test("collapsed restore keeps an expand control visible", () => {
     const app = setupApp();
     localStorage.setItem("pi.sb.collapsed", "1");
