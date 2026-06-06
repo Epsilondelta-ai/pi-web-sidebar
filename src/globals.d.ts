@@ -1,8 +1,8 @@
-import type { PiWebRegistry } from "./types";
+import type { PiWebRegistry, PiWebSidebarGlobal } from "./types";
 
 declare global {
-  var PI_WEB_API_BASE: string | undefined;
   var piWeb: PiWebRegistry | undefined;
+  var piWebSidebar: PiWebSidebarGlobal | undefined;
 }
 
 export {};

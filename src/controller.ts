@@ -1,4 +1,4 @@
-import { loadWorkspaces } from "./api";
+import { loadPiStatus, loadWorkspaces } from "./api";
 import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
@@ -57,6 +57,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
     sidebarBridge.emitState("mounted");
+    void refreshPiStatus();
     void refreshCurrentWorkspaces();
   }
 
@@ -141,6 +142,14 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     refreshTimer = setTimeout((): void => { void refreshCurrentWorkspaces(); }, 50);
+  }
+
+  async function refreshPiStatus(): Promise<void> {
+    try {
+      sidebarBridge.updatePiStatus(await loadPiStatus(context), "pi-status");
+    } catch (error) {
+      sidebarBridge.updatePiStatus({ available: false, checkedAt: new Date().toISOString(), error: String(error) }, "pi-status");
+    }
   }
 
   async function refreshCurrentWorkspaces(options: RefreshOptions = {}): Promise<SidebarWorkspace[]> {

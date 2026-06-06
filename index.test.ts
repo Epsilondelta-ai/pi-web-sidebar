@@ -45,6 +45,7 @@ afterEach(() => {
   globalThis.confirm = undefined as unknown as typeof confirm;
   globalThis.localStorage = undefined as unknown as Storage;
   delete globalThis.piWeb;
+  delete globalThis.piWebSidebar;
 });
 
 function setupApp(): TestApp {
@@ -113,6 +114,10 @@ function testContext(app: TestApp, overrides: Partial<TestContext> = {}): TestCo
 
       if (method === "save-workspace-cache") {
         return { path: "~/.pi-web/pi-web-sidebar/workspaces.json" };
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z", executable: "/bin/pi", version: "pi test" };
       }
 
       return overrides.backend?.(method, options) || {};
@@ -228,6 +233,7 @@ function deferred<T>(): Deferred<T> {
 describe("pi-web-sidebar plugin", () => {
   test("mounts plugin sidebar directly under empty app body", async () => {
     const app = setupApp();
+    app.removeAttribute("data-sidebar");
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
@@ -246,6 +252,9 @@ describe("pi-web-sidebar plugin", () => {
     expect(pluginSidebar.querySelector(".sb-footer")).toBeFalsy();
     expect(pluginSidebar.querySelector("[data-action='open-settings']")).toBeFalsy();
     expect(app.querySelectorAll(".app-body > :not([data-pi-web-sidebar-plugin])")).toHaveLength(0);
+    expect((pluginSidebar as HTMLElement).hidden).toBe(false);
+    expect(app.dataset.sidebar).toBe("open");
+    expect(requireElement<HTMLElement>(app, ".app-body").style.gridTemplateColumns).toBe("280px 1fr");
     expect(requireElement(pluginSidebar, "[data-workspace-group='w1'] .label").textContent).toBe("one");
     expect(requireElement(pluginSidebar, "[data-workspace-group='w1'] .ws-path").textContent).toBe("/one");
     expect(app.renderSidebarWorkspacesCalls).toEqual([]);
@@ -453,31 +462,72 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.renderSortableSidebarWorkspacesCalls).toEqual([]);
   });
 
+  test("mounts before existing workspace content so the sidebar renders on the left", async () => {
+    const app = setupApp();
+    const workspaceView: HTMLDivElement = document.createElement("div");
+    workspaceView.dataset.view = "workspace";
+    requireElement(app, ".app-body").append(workspaceView);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const body = requireElement(app, ".app-body");
+    expect(body.firstElementChild?.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+    expect(body.children[1]).toBe(workspaceView);
+    expect(body.style.gridTemplateColumns).toBe("280px 1fr");
+  });
+
   test("exposes RxJS sidebar state and events for other plugins", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
     const controller = createSidebarController(app, testContext(app));
     const states: import("./src/types").SidebarSnapshot[] = [];
     const events: import("./src/types").SidebarActionEvent[] = [];
+    const piStatuses: import("./src/types").PiStatus[] = [];
+    const rxStates: import("./src/types").SidebarSnapshot[] = [];
+    const rxEvents: import("./src/types").SidebarActionEvent[] = [];
+    const rxPiStatuses: import("./src/types").PiStatus[] = [];
     const state$ = globalThis.piWeb!.behaviorSubject<import("./src/types").SidebarSnapshot>(
       "plugin.pi-web-sidebar.state",
       {} as import("./src/types").SidebarSnapshot,
     );
     const events$ = globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event");
+    const piStatus$ = globalThis.piWeb!.behaviorSubject<import("./src/types").PiStatus>(
+      "plugin.pi-web-sidebar.piStatus",
+      { available: false, checkedAt: "" },
+    );
 
     controller.mount();
+    const rxChannels = globalThis.piWebSidebar?.channels;
+
+    if (!rxChannels) {
+      throw new Error("missing RxJS sidebar channels");
+    }
+
     const stateSubscription = state$.subscribe((state) => states.push(state));
     const eventSubscription = events$.subscribe((event) => events.push(event));
+    const piStatusSubscription = piStatus$.subscribe((status) => piStatuses.push(status));
+    const rxStateSubscription = rxChannels.state$.subscribe((state) => rxStates.push(state));
+    const rxEventSubscription = rxChannels.events$.subscribe((event) => rxEvents.push(event));
+    const rxPiStatusSubscription = rxChannels.piStatus$.subscribe((status) => rxPiStatuses.push(status));
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
     expect(states.at(-1)?.workspaceCount).toBe(1);
     expect(states.at(-1)?.sessionCount).toBe(0);
     expect(states.at(-1)?.workspaces[0]?.id).toBe("w2");
+    expect(states.at(-1)?.piStatus.available).toBe(true);
+    expect(piStatuses.at(-1)?.version).toBe("pi test");
+    expect(rxStates.at(-1)?.workspaces[0]?.id).toBe("w2");
+    expect(rxPiStatuses.at(-1)?.version).toBe("pi test");
     expect(events.some((event) => event.type === "state" && event.reason === "render-workspaces")).toBe(true);
+    expect(events.some((event) => event.type === "pi-status")).toBe(true);
+    expect(rxEvents.some((event) => event.type === "pi-status")).toBe(true);
 
     controller.dispose();
     expect((state$ as TestSubject<import("./src/types").SidebarSnapshot>).closed).toBe(false);
     expect((events$ as TestSubject<import("./src/types").SidebarActionEvent>).closed).toBe(false);
+    expect(globalThis.piWebSidebar).toBeUndefined();
 
     const secondController = createSidebarController(app, testContext(app));
     secondController.mount();
@@ -487,6 +537,10 @@ describe("pi-web-sidebar plugin", () => {
     expect(events.some((event) => event.type === "disposed")).toBe(true);
     expect(stateSubscription).toBeTruthy();
     expect(eventSubscription).toBeTruthy();
+    expect(piStatusSubscription).toBeTruthy();
+    expect(rxStateSubscription).toBeTruthy();
+    expect(rxEventSubscription).toBeTruthy();
+    expect(rxPiStatusSubscription).toBeTruthy();
     secondController.dispose();
   });
 
