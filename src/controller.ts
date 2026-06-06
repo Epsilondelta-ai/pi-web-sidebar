@@ -3,23 +3,23 @@ import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
-import { createSidebar, findNativeSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
+import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
 import { applySidebarGrid, bindResizer, restoreSidebarLayout } from "./layout";
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { readStoredObject, storeJson } from "./storage";
-import { ORIGINAL_PLACEHOLDER_ATTR, PLUGIN_PANEL_ATTR } from "./constants";
-import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace } from "./types";
+import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
+import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace, SubscriptionLike } from "./types";
 
 type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
 
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
-  let nativeSidebar: HTMLElement | null = null;
-  let nativePlaceholder: HTMLTemplateElement | null = null;
   let draggedItem: DragItem | null = null;
   let resizeCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let channelSubscriptions: SubscriptionLike[] = [];
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
@@ -31,13 +31,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     wrap = validPluginSidebar(app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)) || createSidebar();
-    const foundNativeSidebar: HTMLElement | undefined = findNativeSidebar(body, wrap);
-    nativeSidebar = nativeSidebar || foundNativeSidebar || null;
-
-    if (!nativePlaceholder && foundNativeSidebar) {
-      detachNativeSidebar(foundNativeSidebar);
-    }
-
     if (!wrap.isConnected) {
       body.insertBefore(wrap, body.firstElementChild);
     }
@@ -45,12 +38,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindMountedSidebar();
   }
 
-  function detachNativeSidebar(foundNativeSidebar: HTMLElement): void {
-    resetHostSidebarRenderState(app);
-    nativePlaceholder = document.createElement("template");
-    nativePlaceholder.setAttribute(ORIGINAL_PLACEHOLDER_ATTR, "");
-    foundNativeSidebar.replaceWith(nativePlaceholder);
-  }
   function bindMountedSidebar(): void {
     if (!wrap) {
       return;
@@ -62,6 +49,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
     bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
+    restorePersistedSelection();
+    bindPiWebChannels();
     renderCurrentWorkspaces();
     restoreSidebarLayout(app);
     sidebarBridge.emitState("mounted");
@@ -72,16 +61,15 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     resetHostSidebarRenderState(app);
     resizeCleanup?.();
     resizeCleanup = undefined;
+    channelSubscriptions.forEach((subscription: SubscriptionLike): void => subscription.unsubscribe());
+    channelSubscriptions = [];
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = undefined;
+    }
     app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
     wrap?.remove();
 
-    if (nativePlaceholder?.isConnected && nativeSidebar) {
-      nativePlaceholder.replaceWith(nativeSidebar);
-      nativeSidebar.toggleAttribute("hidden", app.dataset.sidebar === "collapsed");
-    }
-
-    nativePlaceholder = null;
-    nativeSidebar = null;
     wrap = null;
     applySidebarGrid(app);
     sidebarBridge.dispose();
@@ -92,6 +80,62 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     ensureWorkspaceDragHandles(wrap);
     ensureSessionDragHandles(wrap);
     sidebarBridge.emitState("render-workspaces");
+  }
+
+  function restorePersistedSelection(): void {
+    app.dataset.activeSessionId = app.dataset.activeSessionId || localStorage.getItem(ACTIVE_SESSION_KEY) || "";
+    app.dataset.activeWorkspaceId = app.dataset.activeWorkspaceId || localStorage.getItem(ACTIVE_WORKSPACE_KEY) || "";
+  }
+
+  function bindPiWebChannels(): void {
+    if (channelSubscriptions.length > 0 || !globalThis.piWeb) {
+      return;
+    }
+
+    channelSubscriptions = [
+      globalThis.piWeb.behaviorSubject<string | null>("session.activeId", app.dataset.activeSessionId || null)
+        .subscribe((sessionId: string | null): void => applyActiveSession(sessionId)),
+      globalThis.piWeb.subject<Record<string, unknown>>("session.changed")
+        .subscribe((change: Record<string, unknown>): void => applySessionChange(change)),
+      globalThis.piWeb.subject("chat.input.submitted").subscribe((): void => scheduleRefresh()),
+    ];
+  }
+
+  function applyActiveSession(sessionId: string | null): void {
+    app.dataset.activeSessionId = sessionId || "";
+    reconcileActiveWorkspace();
+    storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
+    renderCurrentWorkspaces();
+  }
+
+  function reconcileActiveWorkspace(): void {
+    const sessionId: string = app.dataset.activeSessionId || "";
+    const workspaceId: string = findWorkspaceIdForSession(workspaces, sessionId);
+
+    if (workspaceId) {
+      app.dataset.activeWorkspaceId = workspaceId;
+      storePersistedSelection(sessionId, workspaceId);
+    }
+  }
+
+  function applySessionChange(change: Record<string, unknown>): void {
+    const sessionId: string = stringValue(change.sessionId) || stringValue(change.id);
+    const title: string = stringValue(change.title) || stringValue(change.name);
+
+    if (!sessionId || !title) {
+      return;
+    }
+
+    workspaces = renameWorkspaceSession(workspaces, sessionId, title);
+    renderCurrentWorkspaces();
+  }
+
+  function scheduleRefresh(): void {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+
+    refreshTimer = setTimeout((): void => { void refreshCurrentWorkspaces(); }, 50);
   }
 
   async function refreshCurrentWorkspaces(options: RefreshOptions = {}): Promise<SidebarWorkspace[]> {
@@ -116,6 +160,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       }
 
       workspaces = nextWorkspaces;
+      reconcileActiveWorkspace();
       renderCurrentWorkspaces();
       sidebarBridge.emitEvent("refresh-workspaces", { workspaceCount: workspaces.length });
     } catch (error) {
@@ -337,6 +382,36 @@ function withoutWorkspaceSessions(
   }
 
   return nextWorkspaces;
+}
+
+function renameWorkspaceSession(workspaces: SidebarWorkspace[], sessionId: string, title: string): SidebarWorkspace[] {
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => ({
+    ...workspace,
+    sessions: (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
+      return session.id === sessionId ? { ...session, title: normalizeSessionTitle(title), name: normalizeSessionTitle(title) } : session;
+    }),
+  }));
+}
+
+function normalizeSessionTitle(title: string): string {
+  return title.length > 12 ? `${title.slice(0, 12)}...` : title;
+}
+
+function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: string): string {
+  return workspaces.find((workspace: SidebarWorkspace): boolean => {
+    return (workspace.sessions || []).some((session: SidebarSession): boolean => session.id === sessionId);
+  })?.id || "";
+}
+
+function storePersistedSelection(sessionId: string, workspaceId: string): void {
+  try {
+    localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaceId);
+  } catch {}
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function validPluginSidebar(candidate: Element | null): HTMLElement | null {

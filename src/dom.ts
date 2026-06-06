@@ -28,6 +28,12 @@ export function installFallbackDragStyles(): void {
     [data-pi-web-sidebar-drag-handle] {
       cursor: grab;
     }
+    [data-pi-web-sidebar-plugin] .session-indicator {
+      flex: 0 0 auto;
+    }
+    [data-pi-web-sidebar-plugin] .session-indicator.unread {
+      background: #f59e0b;
+    }
     [data-pi-web-sidebar-drag-handle]:active {
       cursor: grabbing;
     }
@@ -80,13 +86,6 @@ export function resetHostSidebarRenderState(app: AppElement): void {
   app.sidebarSortableRoot?.unmount?.();
   app.sidebarSortableRoot = undefined;
   app.sidebarSortableRenderToken = undefined;
-}
-
-export function findNativeSidebar(body: HTMLElement, pluginWrap: HTMLElement): HTMLElement | undefined {
-  const sidebars: HTMLElement[] = [...body.querySelectorAll<HTMLElement>(".sidebar-wrap")];
-  return sidebars.find((candidate: HTMLElement): boolean => {
-    return candidate !== pluginWrap && !candidate.hasAttribute(PLUGIN_PANEL_ATTR);
-  });
 }
 
 export function createSidebar(): HTMLElement {

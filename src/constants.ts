@@ -1,8 +1,9 @@
 export const PLUGIN_PANEL_ATTR = "data-pi-web-sidebar-plugin";
-export const ORIGINAL_PLACEHOLDER_ATTR = "data-pi-web-sidebar-original-placeholder";
 export const FALLBACK_STYLE_ID = "pi-web-sidebar-fallback-drag-style";
 export const SIDEBAR_WIDTH_KEY = "pi.sb.width";
 export const SIDEBAR_COLLAPSED_KEY = "pi.sb.collapsed";
+export const ACTIVE_SESSION_KEY = "plugin.pi-web-sidebar.activeSessionId";
+export const ACTIVE_WORKSPACE_KEY = "plugin.pi-web-sidebar.activeWorkspaceId";
 
 export const ICONS: Record<string, string> = {
   plus: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>',
