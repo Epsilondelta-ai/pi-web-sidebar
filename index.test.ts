@@ -57,6 +57,7 @@ function setupApp(): TestApp {
   globalThis.document = windowRef.document as unknown as Document;
   document.body.innerHTML = `
     <pi-app data-sidebar="open">
+      <header class="topbar"><span class="brand">pi/web</span><div class="actions" data-plugin-toolbar></div></header>
       <section class="app-body"></section>
     </pi-app>`;
   const app: TestApp | null = document.querySelector<TestApp>("pi-app");
@@ -346,9 +347,12 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
 
     const pluginSidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
-    const expand = requireElement<HTMLElement>(app, ".sb-expand-btn");
+    const expand = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-toggle]");
+    const topbar = requireElement<HTMLElement>(app, ".topbar");
     expect(pluginSidebar.hidden).toBe(true);
     expect(expand.style.display).toBe("inline-flex");
+    expect(expand.parentElement).toBe(topbar);
+    expect(topbar.firstElementChild).toBe(expand);
 
     expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
 
@@ -364,10 +368,13 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
 
     const pluginSidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
-    const expand = requireElement<HTMLButtonElement>(app, ".sb-expand-btn");
+    const expand = requireElement<HTMLButtonElement>(app, "[data-pi-web-sidebar-toggle]");
+    const topbar = requireElement<HTMLElement>(app, ".topbar");
     expect(pluginSidebar.hidden).toBe(false);
     expect(expand.style.display).toBe("inline-flex");
     expect(expand.getAttribute("aria-label")).toBe("collapse sidebar");
+    expect(expand.parentElement).toBe(topbar);
+    expect(topbar.firstElementChild).toBe(expand);
 
     expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
 
@@ -390,8 +397,34 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin]")).toBeFalsy();
-    expect(app.querySelector(".sb-expand-btn")).toBeFalsy();
+    expect(app.querySelector("[data-pi-web-sidebar-toggle]")).toBeFalsy();
     expect(requireElement(app, ".app-body").children).toHaveLength(0);
+  });
+
+  test("does not reuse or remove a host-owned sidebar button", () => {
+    const app = setupApp();
+    const topbar = requireElement<HTMLElement>(app, ".topbar");
+    const hostButton = document.createElement("button");
+    const controller = createSidebarController(app, testContext(app));
+    hostButton.type = "button";
+    hostButton.className = "sb-expand-btn";
+    hostButton.textContent = "host";
+    topbar.append(hostButton);
+
+    controller.mount();
+
+    const pluginButton = requireElement<HTMLButtonElement>(app, "[data-pi-web-sidebar-toggle]");
+    expect(pluginButton).not.toBe(hostButton);
+    expect(topbar.firstElementChild).toBe(pluginButton);
+
+    pluginButton.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    expect(requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]").hidden).toBe(true);
+
+    controller.dispose();
+
+    expect(hostButton.isConnected).toBe(true);
+    expect(app.querySelector("[data-pi-web-sidebar-toggle]")).toBeFalsy();
   });
 
   test("controller renders workspace changes without host sidebar renderers", () => {

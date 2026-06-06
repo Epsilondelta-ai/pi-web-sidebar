@@ -40,7 +40,7 @@ export function bindSidebarToggleViewport(app: AppElement): () => void {
   return (): void => {
     media?.removeEventListener?.("change", update);
     window.removeEventListener("resize", update);
-    app.querySelector(".sb-expand-btn")?.remove();
+    app.querySelector("[data-pi-web-sidebar-toggle]")?.remove();
   };
 }
 
@@ -64,19 +64,30 @@ function syncSidebarToggleButton(app: AppElement): void {
 }
 
 function ensureSidebarExpandButton(app: AppElement): HTMLElement {
-  const existing: HTMLElement | null = app.querySelector(".sb-expand-btn");
+  const host: HTMLElement = app.querySelector(".topbar") || app;
+  const existing: HTMLElement | null = app.querySelector("[data-pi-web-sidebar-toggle]");
 
   if (existing) {
+    mountSidebarToggleButton(existing, host);
     return existing;
   }
 
   const expand: HTMLButtonElement = document.createElement("button");
   expand.type = "button";
-  expand.className = "sb-expand-btn";
+  expand.className = "iconbtn pi-web-sidebar-toggle";
+  expand.dataset.piWebSidebarToggle = "";
   expand.style.display = "none";
   expand.addEventListener("click", (): void => collapseSidebarLayout(app, app.dataset.sidebar !== "collapsed"));
-  app.append(expand);
+  mountSidebarToggleButton(expand, host);
   return expand;
+}
+
+function mountSidebarToggleButton(button: HTMLElement, host: HTMLElement): void {
+  if (button.parentElement === host && button === host.firstElementChild) {
+    return;
+  }
+
+  host.insertBefore(button, host.firstElementChild);
 }
 
 function isMobileSidebarViewport(): boolean {
