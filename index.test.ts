@@ -603,6 +603,84 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
   });
 
+  test("polls host workspaces until sessions render without pressing refresh", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "loaded" }] }];
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("loaded");
+    controller.dispose();
+  });
+
+  test("keeps polling until delayed host sessions populate an existing workspace", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "late session" }] }];
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("late session");
+    controller.dispose();
+  });
+
+  test("replaces stale cached workspaces when direct sessions arrive later", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({
+      workspaces: [{ id: "cached", name: "cached", path: "/cached", sessions: [] }],
+    }));
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "direct" }] }];
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
+
+    expect(app.querySelector("[data-workspace-group='cached']")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("direct");
+    controller.dispose();
+  });
+
   test("exposes RxJS sidebar state and events for other plugins", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
@@ -789,6 +867,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(sidebarStyle).toContain("[data-pi-web-sidebar-plugin] {");
     expect(sidebarStyle).toContain("grid-template-columns: minmax(0, 1fr) 4px");
     expect(sidebarStyle).toContain(".session-row[data-session]");
+    expect(sidebarStyle).toContain(".session-row[data-session] .session-main");
+    expect(sidebarStyle).toContain("text-overflow: ellipsis");
     expect(sidebarStyle).toContain("padding-left: 12px");
   });
 

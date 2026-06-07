@@ -34,7 +34,38 @@ export function installFallbackDragStyles(): void {
       transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
     }
     [data-pi-web-sidebar-plugin] .workspace-group > .sessions .session-row[data-session] {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 4px;
+      position: relative;
       padding-left: 12px;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .session-main {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .meta {
+      flex: 0 0 auto;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .session-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      z-index: 10;
     }
     [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
       display: none !important;
@@ -50,6 +81,9 @@ export function installFallbackDragStyles(): void {
     }
     [data-pi-web-sidebar-plugin] .session-indicator {
       flex: 0 0 auto;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
       background: var(--fg-3, #6b7280);
     }
     [data-pi-web-sidebar-plugin] .session-indicator.live {

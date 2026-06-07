@@ -13,6 +13,9 @@ import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSes
 
 type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
 
+const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
+const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
+
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
   let draggedItem: DragItem | null = null;
@@ -20,6 +23,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let sidebarToggleCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let hostWorkspaceRecheckTimer: ReturnType<typeof setTimeout> | undefined;
+  let hostWorkspaceRecheckAttempts: number = 0;
   let channelSubscriptions: SubscriptionLike[] = [];
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
@@ -58,12 +63,10 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
     sidebarBridge.emitState("mounted");
+    hostWorkspaceRecheckAttempts = 0;
     void refreshPiStatus();
     void refreshCurrentWorkspaces();
-
-    if (workspaces.length === 0) {
-      scheduleHostWorkspaceRecheck(100);
-    }
+    scheduleHostWorkspaceRecheck(HOST_WORKSPACE_RECHECK_INTERVAL_MS);
   }
 
   function dispose(): void {
@@ -78,6 +81,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       clearTimeout(refreshTimer);
       refreshTimer = undefined;
     }
+    clearHostWorkspaceRecheck();
     app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
     wrap?.remove();
 
@@ -153,17 +157,35 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function scheduleHostWorkspaceRecheck(delayMs: number): void {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
+    if (hostWorkspaceRecheckTimer) {
+      clearTimeout(hostWorkspaceRecheckTimer);
     }
 
-    refreshTimer = setTimeout((): void => {
-      refreshTimer = undefined;
+    hostWorkspaceRecheckTimer = setTimeout((): void => {
+      hostWorkspaceRecheckTimer = undefined;
 
-      if (directWorkspaceList().length > 0) {
+      if (!wrap) {
+        return;
+      }
+
+      const directWorkspaces: SidebarWorkspace[] = directWorkspaceList();
+      if (directWorkspaces.length > 0 && workspaceContentSignature(directWorkspaces) !== workspaceContentSignature(workspaces)) {
+        hostWorkspaceRecheckAttempts = 0;
         void refreshCurrentWorkspaces();
       }
+
+      if (hostWorkspaceRecheckAttempts < HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS) {
+        hostWorkspaceRecheckAttempts += 1;
+        scheduleHostWorkspaceRecheck(HOST_WORKSPACE_RECHECK_INTERVAL_MS);
+      }
     }, delayMs);
+  }
+
+  function clearHostWorkspaceRecheck(): void {
+    if (hostWorkspaceRecheckTimer) {
+      clearTimeout(hostWorkspaceRecheckTimer);
+      hostWorkspaceRecheckTimer = undefined;
+    }
   }
 
   function directWorkspaceList(): SidebarWorkspace[] {
@@ -442,6 +464,16 @@ function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: st
   return workspaces.find((workspace: SidebarWorkspace): boolean => {
     return (workspace.sessions || []).some((session: SidebarSession): boolean => session.id === sessionId);
   })?.id || "";
+}
+
+function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
+  return workspaces.map((workspace: SidebarWorkspace): string => {
+    const sessions: string = (workspace.sessions || []).map((session: SidebarSession): string => {
+      return [session.id, session.title || "", session.name || "", session.status || "", session.kind || ""].join("/");
+    }).join(",");
+
+    return [workspace.id, workspace.name || "", workspace.path || "", workspace.sessionCount || 0, sessions].join(":");
+  }).join("|");
 }
 
 function storePersistedSelection(sessionId: string, workspaceId: string): void {
