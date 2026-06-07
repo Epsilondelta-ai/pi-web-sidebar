@@ -81,11 +81,11 @@ function createWorkspaceButton(workspace: SidebarWorkspace, app: AppElement, ope
   button.dataset.workspace = workspace.id;
   button.setAttribute("aria-expanded", String(open));
   button.setAttribute("aria-current", active ? "true" : "false");
-  button.append(createWorkspaceStack(workspace), createWorkspaceMeta(workspace));
+  button.append(createWorkspaceStack(workspace, active), createWorkspaceMeta(workspace));
   return button;
 }
 
-function createWorkspaceStack(workspace: SidebarWorkspace): HTMLElement {
+function createWorkspaceStack(workspace: SidebarWorkspace, active: boolean): HTMLElement {
   const stack: HTMLSpanElement = document.createElement("span");
   const name: HTMLSpanElement = document.createElement("span");
   const dot: HTMLSpanElement = document.createElement("span");
@@ -94,7 +94,7 @@ function createWorkspaceStack(workspace: SidebarWorkspace): HTMLElement {
   stack.className = "ws-stack";
   name.className = "ws-name";
   dot.className = "dot";
-  dot.classList.toggle("live", !!workspace.live || workspaceHasActiveSession(workspace));
+  dot.classList.toggle("live", active || !!workspace.live);
   label.className = "label";
   label.textContent = workspace.name || workspace.path || workspace.id;
   path.className = "ws-path";
@@ -150,7 +150,7 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
 
 function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorkspace, app: AppElement): HTMLElement {
   const selected: boolean = session.id === app.dataset.activeSessionId;
-  const titleText: string = normalizeSessionTitle(session.title || session.name || session.id);
+  const titleText: string = sessionDisplayTitle(session);
   const row: HTMLDivElement = document.createElement("div");
   row.className = ["session-row", selected && "active", selected && "selected", session.parentId && "child-session"]
     .filter(Boolean)
@@ -181,7 +181,7 @@ function createSessionMain(session: SidebarSession, workspaceId: string, titleTe
   main.dataset.title = titleText;
   dot.className = "dot session-indicator";
   dot.classList.toggle("live", sessionIsLive(session));
-  dot.classList.toggle("unread", !sessionIsLive(session) && sessionIsUnread(session));
+  dot.classList.toggle("idle", !sessionIsLive(session));
   dot.setAttribute("aria-label", sessionIndicatorLabel(session));
   dot.title = sessionIndicatorLabel(session);
   title.className = "title";
@@ -241,36 +241,47 @@ function createNewSessionRow(workspaceId: string): HTMLElement {
 
 function sessionBadges(session: SidebarSession): string[] {
   const badges: string[] = [];
+  const kind: string = session.kind?.trim() || "";
 
-  if (sessionIsUnread(session)) {
-    badges.push("unread");
-  }
-
-  if (session.kind) {
-    badges.push(session.kind);
+  if (kind && !isStatusLabel(kind)) {
+    badges.push(kind);
   }
 
   return badges;
 }
 
 function sessionIndicatorLabel(session: SidebarSession): string {
-  if (sessionIsLive(session)) {
-    return "session live";
-  }
-
-  if (sessionIsUnread(session)) {
-    return "session unread";
-  }
-
-  return "session idle";
+  return sessionIsLive(session) ? "session active" : "session inactive";
 }
 
 function sessionIsLive(session: SidebarSession): boolean {
-  return !!(session.live || session.active || ["running", "thinking", "active", "live"].includes(session.status || ""));
+  if (sessionIsCompleted(session)) {
+    return false;
+  }
+
+  const status: string = (session.status || "").toLowerCase();
+  return !!(session.live || session.active || ["running", "thinking", "active", "live"].includes(status));
 }
 
-function sessionIsUnread(session: SidebarSession): boolean {
-  return !!(session.unreadCompleted || session.unread);
+function sessionIsCompleted(session: SidebarSession): boolean {
+  const status: string = (session.status || "").toLowerCase();
+  return !!(session.unreadCompleted || ["complete", "completed", "done", "failed", "success"].includes(status));
+}
+
+function isStatusLabel(value: string): boolean {
+  const label: string = value.trim().toLowerCase();
+  return ["active", "complete", "completed", "done", "failed", "idle", "live", "running", "success", "thinking", "waiting"]
+    .includes(label);
+}
+
+function sessionDisplayTitle(session: SidebarSession): string {
+  const title: string = session.title || session.name || "";
+
+  if (title && !isStatusLabel(title)) {
+    return normalizeSessionTitle(title);
+  }
+
+  return normalizeSessionTitle(session.id);
 }
 
 function normalizeSessionTitle(title: string): string {

@@ -9,12 +9,63 @@ export function installFallbackDragStyles(): void {
   const style: HTMLStyleElement = document.createElement("style");
   style.id = FALLBACK_STYLE_ID;
   style.textContent = `
+    [data-pi-web-sidebar-plugin] {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 4px;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    [data-pi-web-sidebar-plugin][hidden] {
+      display: none !important;
+    }
+    [data-pi-web-sidebar-plugin] .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+    }
     [data-pi-web-sidebar-plugin] .workspace-group,
     [data-pi-web-sidebar-plugin] .session-row[data-session] {
+      min-width: 0;
       transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
     }
     [data-pi-web-sidebar-plugin] .workspace-group > .sessions .session-row[data-session] {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 4px;
+      position: relative;
       padding-left: 12px;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .session-main {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .meta {
+      flex: 0 0 auto;
+    }
+    [data-pi-web-sidebar-plugin] .session-row[data-session] .session-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      z-index: 10;
     }
     [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
       display: none !important;
@@ -30,9 +81,13 @@ export function installFallbackDragStyles(): void {
     }
     [data-pi-web-sidebar-plugin] .session-indicator {
       flex: 0 0 auto;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--fg-3, #6b7280);
     }
-    [data-pi-web-sidebar-plugin] .session-indicator.unread {
-      background: #f59e0b;
+    [data-pi-web-sidebar-plugin] .session-indicator.live {
+      background: var(--ok, #22c55e);
     }
     [data-pi-web-sidebar-drag-handle]:active {
       cursor: grabbing;

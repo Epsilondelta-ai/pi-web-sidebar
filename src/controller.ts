@@ -13,6 +13,9 @@ import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSes
 
 type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
 
+const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
+const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
+
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
   let draggedItem: DragItem | null = null;
@@ -20,12 +23,16 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let sidebarToggleCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let hostWorkspaceRecheckTimer: ReturnType<typeof setTimeout> | undefined;
+  let hostWorkspaceRecheckAttempts: number = 0;
   let channelSubscriptions: SubscriptionLike[] = [];
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
   function mount(): void {
     const body: HTMLElement | null = app.querySelector(".app-body");
+
+    installFallbackDragStyles();
 
     if (!body) {
       throw new Error("pi-web-sidebar requires .app-body");
@@ -44,21 +51,22 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
-    installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
+    restorePersistedSelection();
+    restoreSidebarLayout(app);
     resizeCleanup = bindResizer(wrap, app, sidebarBridge);
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
     bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
-    restorePersistedSelection();
     bindPiWebChannels();
     renderCurrentWorkspaces();
-    restoreSidebarLayout(app);
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
     sidebarBridge.emitState("mounted");
+    hostWorkspaceRecheckAttempts = 0;
     void refreshPiStatus();
     void refreshCurrentWorkspaces();
+    scheduleHostWorkspaceRecheck(HOST_WORKSPACE_RECHECK_INTERVAL_MS);
   }
 
   function dispose(): void {
@@ -73,6 +81,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       clearTimeout(refreshTimer);
       refreshTimer = undefined;
     }
+    clearHostWorkspaceRecheck();
     app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
     wrap?.remove();
 
@@ -136,12 +145,52 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     renderCurrentWorkspaces();
   }
 
-  function scheduleRefresh(): void {
+  function scheduleRefresh(delayMs: number = 50): void {
     if (refreshTimer) {
       clearTimeout(refreshTimer);
     }
 
-    refreshTimer = setTimeout((): void => { void refreshCurrentWorkspaces(); }, 50);
+    refreshTimer = setTimeout((): void => {
+      refreshTimer = undefined;
+      void refreshCurrentWorkspaces();
+    }, delayMs);
+  }
+
+  function scheduleHostWorkspaceRecheck(delayMs: number): void {
+    if (hostWorkspaceRecheckTimer) {
+      clearTimeout(hostWorkspaceRecheckTimer);
+    }
+
+    hostWorkspaceRecheckTimer = setTimeout((): void => {
+      hostWorkspaceRecheckTimer = undefined;
+
+      if (!wrap) {
+        return;
+      }
+
+      const directWorkspaces: SidebarWorkspace[] = directWorkspaceList();
+      if (directWorkspaces.length > 0 && workspaceContentSignature(directWorkspaces) !== workspaceContentSignature(workspaces)) {
+        hostWorkspaceRecheckAttempts = 0;
+        void refreshCurrentWorkspaces();
+      }
+
+      if (hostWorkspaceRecheckAttempts < HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS) {
+        hostWorkspaceRecheckAttempts += 1;
+        scheduleHostWorkspaceRecheck(HOST_WORKSPACE_RECHECK_INTERVAL_MS);
+      }
+    }, delayMs);
+  }
+
+  function clearHostWorkspaceRecheck(): void {
+    if (hostWorkspaceRecheckTimer) {
+      clearTimeout(hostWorkspaceRecheckTimer);
+      hostWorkspaceRecheckTimer = undefined;
+    }
+  }
+
+  function directWorkspaceList(): SidebarWorkspace[] {
+    const source: unknown = Array.isArray(app.workspaceList) ? app.workspaceList : context.initialWorkspaces;
+    return Array.isArray(source) ? source.filter(isSidebarWorkspace) : [];
   }
 
   async function refreshPiStatus(): Promise<void> {
@@ -417,6 +466,16 @@ function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: st
   })?.id || "";
 }
 
+function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
+  return workspaces.map((workspace: SidebarWorkspace): string => {
+    const sessions: string = (workspace.sessions || []).map((session: SidebarSession): string => {
+      return [session.id, session.title || "", session.name || "", session.status || "", session.kind || ""].join("/");
+    }).join(",");
+
+    return [workspace.id, workspace.name || "", workspace.path || "", workspace.sessionCount || 0, sessions].join(":");
+  }).join("|");
+}
+
 function storePersistedSelection(sessionId: string, workspaceId: string): void {
   try {
     localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
@@ -426,6 +485,10 @@ function storePersistedSelection(sessionId: string, workspaceId: string): void {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isSidebarWorkspace(value: unknown): value is SidebarWorkspace {
+  return !!value && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string";
 }
 
 function validPluginSidebar(candidate: Element | null): HTMLElement | null {

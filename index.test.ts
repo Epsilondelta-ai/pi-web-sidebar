@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Window as HappyWindow } from "happy-dom";
+import { loadWorkspaces } from "./src/api";
+import { WORKSPACE_CACHE_KEY } from "./src/constants";
 import { createSidebarController } from "./src/index";
 import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, SubscriptionLike } from "./src/types";
 
@@ -472,9 +474,211 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
 
     const body = requireElement(app, ".app-body");
-    expect(body.firstElementChild?.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+    const pluginSidebar = requireElement<HTMLElement>(body, "[data-pi-web-sidebar-plugin]");
+    expect(body.firstElementChild).toBe(pluginSidebar);
     expect(body.children[1]).toBe(workspaceView);
     expect(body.style.gridTemplateColumns).toBe("280px 1fr");
+    expect(pluginSidebar.style.gridColumn).toBe("1");
+    expect(workspaceView.style.gridColumn).toBe("2");
+  });
+
+  test("overrides host grid columns so desktop main content stays right of the sidebar", async () => {
+    const app = setupApp();
+    const body = requireElement(app, ".app-body");
+    const workspaceMain: HTMLElement = document.createElement("main");
+    const sessionMain: HTMLElement = document.createElement("main");
+    const composer: HTMLElement = document.createElement("section");
+    const customOverlay: HTMLElement = document.createElement("div");
+    const tree: HTMLElement = document.createElement("aside");
+    workspaceMain.style.gridColumn = "1";
+    sessionMain.style.gridColumn = "1";
+    composer.style.gridColumn = "1";
+    customOverlay.style.gridColumn = "1 / -1";
+    composer.dataset.pluginComposerRoot = "";
+    tree.dataset.pluginSidebar = "";
+    app.dataset.tree = "on";
+    body.append(workspaceMain, tree, sessionMain, composer, customOverlay);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    expect(requireElement<HTMLElement>(body, "[data-pi-web-sidebar-plugin]").style.gridColumn).toBe("1");
+    expect(workspaceMain.style.gridColumn).toBe("2");
+    expect(sessionMain.style.gridColumn).toBe("2");
+    expect(composer.style.gridColumn).toBe("2");
+    expect(customOverlay.style.gridColumn).toBe("1 / -1");
+    expect(tree.style.gridColumn).toBe("3");
+    expect(body.style.gridTemplateColumns).toBe("280px 1fr 320px");
+  });
+
+  test("loadWorkspaces returns direct workspace state without waiting for cache save", async () => {
+    const app = setupApp();
+    const saveDeferred = deferred<unknown>();
+    const context = testContext(app, { backend: async (method) => {
+      if (method === "save-workspace-cache") {
+        return saveDeferred.promise;
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+
+    const workspaces = await Promise.race([
+      loadWorkspaces(context, app),
+      Promise.resolve().then((): string => "save-blocked"),
+    ]);
+
+    expect(workspaces).toEqual(app.testWorkspaces);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("w1");
+    saveDeferred.resolve({});
+  });
+
+  test("loadWorkspaces uses local workspace cache before backend cache latency", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [] }];
+    const backendDeferred = deferred<unknown>();
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return backendDeferred.promise;
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+
+    expect(await loadWorkspaces(context, app)).toEqual(cachedWorkspaces);
+    backendDeferred.resolve({ workspaces: [] });
+  });
+
+  test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {
+    const app = setupApp();
+    app.workspaceList = [];
+    const cacheDeferred = deferred<unknown>();
+    const lateWorkspaces: SidebarWorkspace[] = [{ id: "late", name: "late", path: "/late", sessions: [] }];
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return cacheDeferred.promise;
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const promise = loadWorkspaces(context, app);
+
+    app.workspaceList = lateWorkspaces;
+    cacheDeferred.resolve({ workspaces: [] });
+
+    expect(await promise).toEqual(lateWorkspaces);
+  });
+
+  test("empty initial mount does not duplicate cache fallback while waiting for host workspaces", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    let cacheLoads = 0;
+    const cacheDeferred = deferred<unknown>();
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        cacheLoads += 1;
+        return cacheDeferred.promise;
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 150); });
+
+    expect(cacheLoads).toBe(1);
+    cacheDeferred.resolve({ workspaces: [] });
+    controller.dispose();
+  });
+
+  test("polls host workspaces until sessions render without pressing refresh", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "loaded" }] }];
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("loaded");
+    controller.dispose();
+  });
+
+  test("keeps polling until delayed host sessions populate an existing workspace", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "late session" }] }];
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("late session");
+    controller.dispose();
+  });
+
+  test("replaces stale cached workspaces when direct sessions arrive later", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({
+      workspaces: [{ id: "cached", name: "cached", path: "/cached", sessions: [] }],
+    }));
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "direct" }] }];
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
+
+    expect(app.querySelector("[data-workspace-group='cached']")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("direct");
+    controller.dispose();
   });
 
   test("exposes RxJS sidebar state and events for other plugins", async () => {
@@ -498,11 +702,16 @@ describe("pi-web-sidebar plugin", () => {
     );
 
     controller.mount();
-    const rxChannels = globalThis.piWebSidebar?.channels;
+    const sidebarApi = globalThis.piWebSidebar;
+    const rxChannels = sidebarApi?.channels;
 
-    if (!rxChannels) {
-      throw new Error("missing RxJS sidebar channels");
+    if (!sidebarApi || !rxChannels) {
+      throw new Error("missing sidebar API");
     }
+
+    expect(app.piWebSidebar).toBe(sidebarApi);
+    expect(sidebarApi.getSnapshot().workspaceCount).toBe(1);
+    expect(sidebarApi.getSnapshot().activeSessionId).toBe("");
 
     const stateSubscription = state$.subscribe((state) => states.push(state));
     const eventSubscription = events$.subscribe((event) => events.push(event));
@@ -510,6 +719,7 @@ describe("pi-web-sidebar plugin", () => {
     const rxStateSubscription = rxChannels.state$.subscribe((state) => rxStates.push(state));
     const rxEventSubscription = rxChannels.events$.subscribe((event) => rxEvents.push(event));
     const rxPiStatusSubscription = rxChannels.piStatus$.subscribe((status) => rxPiStatuses.push(status));
+    expect(await sidebarApi.refresh()).toEqual(app.testWorkspaces);
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
@@ -525,9 +735,12 @@ describe("pi-web-sidebar plugin", () => {
     expect(rxEvents.some((event) => event.type === "pi-status")).toBe(true);
 
     controller.dispose();
+    expect(states.at(-1)?.element).toBeNull();
+    expect(events.at(-1)?.snapshot.element).toBeNull();
     expect((state$ as TestSubject<import("./src/types").SidebarSnapshot>).closed).toBe(false);
     expect((events$ as TestSubject<import("./src/types").SidebarActionEvent>).closed).toBe(false);
     expect(globalThis.piWebSidebar).toBeUndefined();
+    expect(app.piWebSidebar).toBeUndefined();
 
     const secondController = createSidebarController(app, testContext(app));
     secondController.mount();
@@ -585,14 +798,31 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("abcdefghijkl...");
   });
 
-  test("session rows use left indicators and unread is not green", async () => {
+  test("workspace rows only show green indicators when active", async () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", title: "running", status: "running" }] },
+      { id: "w2", name: "two", live: false, sessions: [{ id: "s2", title: "running", status: "running" }] },
+    ];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
+  });
+
+  test("session rows use active or inactive left indicators without waiting text", async () => {
     const app = setupApp();
     app.testWorkspaces = [{
       id: "w1",
       name: "one",
       sessions: [
         { id: "live", title: "live", status: "running" },
-        { id: "unread", title: "unread", unread: true },
+        { id: "active-waiting", title: "real chat", active: true, kind: " waiting " },
+        { id: "completed", title: "completed", active: true, unreadCompleted: true },
+        { id: "waiting", title: "waiting", kind: " waiting ", status: "waiting", unread: true },
       ],
     }];
     const controller = createSidebarController(app, testContext(app));
@@ -600,9 +830,19 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
 
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
-    expect(app.querySelector("[data-session='unread'] .session-indicator.unread")).toBeTruthy();
-    expect(app.querySelector("[data-session='unread'] .session-indicator.live")).toBeFalsy();
-    expect(app.textContent?.includes("waiting")).toBe(false);
+    expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
+    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .meta").hidden).toBe(true);
+    expect(app.querySelector("[data-session='completed'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='completed'] .session-indicator.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='completed'] .session-indicator").title).toBe("session inactive");
+    expect(requireElement<HTMLElement>(app, "[data-session='completed'] .title").textContent).toBe("completed");
+    expect(app.querySelector("[data-session='waiting'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='waiting'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-session='waiting'] .session-indicator.unread")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='waiting'] .session-indicator").title).toBe("session inactive");
+    expect(requireElement<HTMLElement>(app, "[data-session='waiting'] .meta").hidden).toBe(true);
   });
 
   test("chat input submitted marks sessions dirty and schedules refresh", async () => {
@@ -633,7 +873,11 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='s1'] .session-menu [data-action='rename-session']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1'] .session-menu [data-action='delete-session']")).toBeTruthy();
     const sidebarStyle = document.getElementById("pi-web-sidebar-fallback-drag-style")?.textContent;
+    expect(sidebarStyle).toContain("[data-pi-web-sidebar-plugin] {");
+    expect(sidebarStyle).toContain("grid-template-columns: minmax(0, 1fr) 4px");
     expect(sidebarStyle).toContain(".session-row[data-session]");
+    expect(sidebarStyle).toContain(".session-row[data-session] .session-main");
+    expect(sidebarStyle).toContain("text-overflow: ellipsis");
     expect(sidebarStyle).toContain("padding-left: 12px");
   });
 

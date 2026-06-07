@@ -11,6 +11,7 @@ import type {
   SidebarSnapshot,
   SidebarRxChannels,
   SidebarWorkspace,
+  PiWebSidebarGlobal,
   SubjectLike,
 } from "./types";
 
@@ -19,7 +20,7 @@ export function createSidebarBridge(
   _context: PluginContext,
   getWorkspaces: () => SidebarWorkspace[],
   getElement: () => HTMLElement | null,
-  _refresh: () => Promise<SidebarWorkspace[]>,
+  refresh: () => Promise<SidebarWorkspace[]>,
 ): SidebarBridge {
   let latestPiStatus: PiStatus = createUnknownPiStatus();
   let latestSnapshot: SidebarSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
@@ -37,7 +38,14 @@ export function createSidebarBridge(
     resolveSelectedSession(latestSnapshot),
   );
   const events$: SubjectLike<SidebarActionEvent> | undefined = globalThis.piWeb?.subject("plugin.pi-web-sidebar.event");
-  exposeSidebarChannels(channels);
+  const api: PiWebSidebarGlobal = {
+    channels,
+    getSnapshot(): SidebarSnapshot {
+      return latestSnapshot;
+    },
+    refresh,
+  };
+  exposeSidebarApi(app, api);
 
   function publishState(reason: string): void {
     latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
@@ -65,8 +73,11 @@ export function createSidebarBridge(
       publishEvent(channels, events$, { type: "pi-status", detail: { available: status.available }, snapshot: latestSnapshot });
     },
     dispose(): void {
+      latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
+      channels.state$.next(latestSnapshot);
+      state$?.next(latestSnapshot);
       publishEvent(channels, events$, { type: "disposed", detail: {}, snapshot: latestSnapshot });
-      clearSidebarChannels(channels);
+      clearSidebarApi(app, api);
       completeRxChannels(channels);
     },
   };
@@ -142,13 +153,18 @@ function createRxChannels(snapshot: SidebarSnapshot, piStatus: PiStatus): Sideba
   };
 }
 
-function exposeSidebarChannels(channels: SidebarRxChannels): void {
-  globalThis.piWebSidebar = { channels };
+function exposeSidebarApi(app: AppElement, api: PiWebSidebarGlobal): void {
+  globalThis.piWebSidebar = api;
+  app.piWebSidebar = api;
 }
 
-function clearSidebarChannels(channels: SidebarRxChannels): void {
-  if (globalThis.piWebSidebar?.channels === channels) {
+function clearSidebarApi(app: AppElement, api: PiWebSidebarGlobal): void {
+  if (globalThis.piWebSidebar === api) {
     delete globalThis.piWebSidebar;
+  }
+
+  if (app.piWebSidebar === api) {
+    delete app.piWebSidebar;
   }
 }
 
