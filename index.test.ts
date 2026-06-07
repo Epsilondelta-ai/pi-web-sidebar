@@ -733,8 +733,9 @@ describe("pi-web-sidebar plugin", () => {
       name: "one",
       sessions: [
         { id: "live", title: "live", status: "running" },
+        { id: "active-waiting", title: "real chat", active: true, kind: " waiting " },
         { id: "completed", title: "completed", active: true, unreadCompleted: true },
-        { id: "waiting", title: "waiting", kind: "waiting", status: "waiting", unread: true },
+        { id: "waiting", title: "waiting", kind: " waiting ", status: "waiting", unread: true },
       ],
     }];
     const controller = createSidebarController(app, testContext(app));
@@ -744,6 +745,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
     expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
+    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .meta").hidden).toBe(true);
     expect(app.querySelector("[data-session='completed'] .session-indicator.idle")).toBeTruthy();
     expect(app.querySelector("[data-session='completed'] .session-indicator.live")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='completed'] .session-indicator").title).toBe("session inactive");

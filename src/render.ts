@@ -241,9 +241,10 @@ function createNewSessionRow(workspaceId: string): HTMLElement {
 
 function sessionBadges(session: SidebarSession): string[] {
   const badges: string[] = [];
+  const kind: string = session.kind?.trim() || "";
 
-  if (session.kind && !isStatusLabel(session.kind)) {
-    badges.push(session.kind);
+  if (kind && !isStatusLabel(kind)) {
+    badges.push(kind);
   }
 
   return badges;
@@ -268,8 +269,9 @@ function sessionIsCompleted(session: SidebarSession): boolean {
 }
 
 function isStatusLabel(value: string): boolean {
+  const label: string = value.trim().toLowerCase();
   return ["active", "complete", "completed", "done", "failed", "idle", "live", "running", "success", "thinking", "waiting"]
-    .includes(value.toLowerCase());
+    .includes(label);
 }
 
 function sessionDisplayTitle(session: SidebarSession): string {
