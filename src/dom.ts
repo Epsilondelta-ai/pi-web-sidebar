@@ -31,9 +31,6 @@ export function installFallbackDragStyles(): void {
     [data-pi-web-sidebar-plugin] .workspace-group,
     [data-pi-web-sidebar-plugin] .session-row[data-session] {
       min-width: 0;
-    }
-    [data-pi-web-sidebar-plugin] .workspace-group,
-    [data-pi-web-sidebar-plugin] .session-row[data-session] {
       transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
     }
     [data-pi-web-sidebar-plugin] .workspace-group > .sessions .session-row[data-session] {

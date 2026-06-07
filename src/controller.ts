@@ -46,7 +46,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
-    installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
     restorePersistedSelection();
     restoreSidebarLayout(app);
