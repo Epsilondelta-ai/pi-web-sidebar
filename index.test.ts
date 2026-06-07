@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Window as HappyWindow } from "happy-dom";
+import { loadWorkspaces } from "./src/api";
 import { createSidebarController } from "./src/index";
 import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, SubscriptionLike } from "./src/types";
 
@@ -472,9 +473,113 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
 
     const body = requireElement(app, ".app-body");
-    expect(body.firstElementChild?.hasAttribute("data-pi-web-sidebar-plugin")).toBe(true);
+    const pluginSidebar = requireElement<HTMLElement>(body, "[data-pi-web-sidebar-plugin]");
+    expect(body.firstElementChild).toBe(pluginSidebar);
     expect(body.children[1]).toBe(workspaceView);
     expect(body.style.gridTemplateColumns).toBe("280px 1fr");
+    expect(pluginSidebar.style.gridColumn).toBe("1");
+    expect(workspaceView.style.gridColumn).toBe("2");
+  });
+
+  test("overrides host grid columns so desktop main content stays right of the sidebar", async () => {
+    const app = setupApp();
+    const body = requireElement(app, ".app-body");
+    const workspaceMain: HTMLElement = document.createElement("main");
+    const sessionMain: HTMLElement = document.createElement("main");
+    const composer: HTMLElement = document.createElement("section");
+    const customOverlay: HTMLElement = document.createElement("div");
+    const tree: HTMLElement = document.createElement("aside");
+    workspaceMain.style.gridColumn = "1";
+    sessionMain.style.gridColumn = "1";
+    composer.style.gridColumn = "1";
+    customOverlay.style.gridColumn = "1 / -1";
+    composer.dataset.pluginComposerRoot = "";
+    tree.dataset.pluginSidebar = "";
+    app.dataset.tree = "on";
+    body.append(workspaceMain, tree, sessionMain, composer, customOverlay);
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    expect(requireElement<HTMLElement>(body, "[data-pi-web-sidebar-plugin]").style.gridColumn).toBe("1");
+    expect(workspaceMain.style.gridColumn).toBe("2");
+    expect(sessionMain.style.gridColumn).toBe("2");
+    expect(composer.style.gridColumn).toBe("2");
+    expect(customOverlay.style.gridColumn).toBe("1 / -1");
+    expect(tree.style.gridColumn).toBe("3");
+    expect(body.style.gridTemplateColumns).toBe("280px 1fr 320px");
+  });
+
+  test("loadWorkspaces returns direct workspace state without waiting for cache save", async () => {
+    const app = setupApp();
+    const saveDeferred = deferred<unknown>();
+    const context = testContext(app, { backend: async (method) => {
+      if (method === "save-workspace-cache") {
+        return saveDeferred.promise;
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+
+    const workspaces = await Promise.race([
+      loadWorkspaces(context, app),
+      Promise.resolve().then((): string => "save-blocked"),
+    ]);
+
+    expect(workspaces).toEqual(app.testWorkspaces);
+    saveDeferred.resolve({});
+  });
+
+  test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {
+    const app = setupApp();
+    app.workspaceList = [];
+    const cacheDeferred = deferred<unknown>();
+    const lateWorkspaces: SidebarWorkspace[] = [{ id: "late", name: "late", path: "/late", sessions: [] }];
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return cacheDeferred.promise;
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const promise = loadWorkspaces(context, app);
+
+    app.workspaceList = lateWorkspaces;
+    cacheDeferred.resolve({ workspaces: [] });
+
+    expect(await promise).toEqual(lateWorkspaces);
+  });
+
+  test("empty initial mount does not duplicate cache fallback while waiting for host workspaces", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    let cacheLoads = 0;
+    const cacheDeferred = deferred<unknown>();
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        cacheLoads += 1;
+        return cacheDeferred.promise;
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 150); });
+
+    expect(cacheLoads).toBe(1);
+    cacheDeferred.resolve({ workspaces: [] });
+    controller.dispose();
   });
 
   test("exposes RxJS sidebar state and events for other plugins", async () => {

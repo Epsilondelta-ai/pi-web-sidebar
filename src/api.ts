@@ -4,11 +4,18 @@ export async function loadWorkspaces(context: PluginContext, app: AppElement): P
   const directWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
 
   if (directWorkspaces.length > 0) {
-    await saveWorkspaceCache(context, directWorkspaces);
+    saveWorkspaceCacheInBackground(context, directWorkspaces);
     return directWorkspaces;
   }
 
   const cachedWorkspaces: SidebarWorkspace[] = await loadWorkspaceCache(context);
+  const latestDirectWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
+
+  if (latestDirectWorkspaces.length > 0) {
+    saveWorkspaceCacheInBackground(context, latestDirectWorkspaces);
+    return latestDirectWorkspaces;
+  }
+
   return cachedWorkspaces.length > 0 ? cachedWorkspaces : directWorkspaces;
 }
 
@@ -91,6 +98,12 @@ export async function saveWorkspaceCache(context: PluginContext, workspaces: Sid
   }
 
   await context.backend?.("save-workspace-cache", { data: { workspaces } });
+}
+
+function saveWorkspaceCacheInBackground(context: PluginContext, workspaces: SidebarWorkspace[]): void {
+  void saveWorkspaceCache(context, workspaces).catch((error: unknown): void => {
+    console.warn("pi-web-sidebar failed to save workspace cache", error);
+  });
 }
 
 function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWorkspace[] {

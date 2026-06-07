@@ -59,6 +59,10 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarBridge.emitState("mounted");
     void refreshPiStatus();
     void refreshCurrentWorkspaces();
+
+    if (workspaces.length === 0) {
+      scheduleHostWorkspaceRecheck(100);
+    }
   }
 
   function dispose(): void {
@@ -136,12 +140,34 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     renderCurrentWorkspaces();
   }
 
-  function scheduleRefresh(): void {
+  function scheduleRefresh(delayMs: number = 50): void {
     if (refreshTimer) {
       clearTimeout(refreshTimer);
     }
 
-    refreshTimer = setTimeout((): void => { void refreshCurrentWorkspaces(); }, 50);
+    refreshTimer = setTimeout((): void => {
+      refreshTimer = undefined;
+      void refreshCurrentWorkspaces();
+    }, delayMs);
+  }
+
+  function scheduleHostWorkspaceRecheck(delayMs: number): void {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+
+    refreshTimer = setTimeout((): void => {
+      refreshTimer = undefined;
+
+      if (directWorkspaceList().length > 0) {
+        void refreshCurrentWorkspaces();
+      }
+    }, delayMs);
+  }
+
+  function directWorkspaceList(): SidebarWorkspace[] {
+    const source: unknown = Array.isArray(app.workspaceList) ? app.workspaceList : context.initialWorkspaces;
+    return Array.isArray(source) ? source.filter(isSidebarWorkspace) : [];
   }
 
   async function refreshPiStatus(): Promise<void> {
@@ -426,6 +452,10 @@ function storePersistedSelection(sessionId: string, workspaceId: string): void {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isSidebarWorkspace(value: unknown): value is SidebarWorkspace {
+  return !!value && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string";
 }
 
 function validPluginSidebar(candidate: Element | null): HTMLElement | null {

@@ -117,6 +117,45 @@ export function applySidebarGrid(app: AppElement, width: number = Number(app.dat
   const expandedColumns: string = tree ? `${width}px 1fr ${treeWidth}px` : `${width}px 1fr`;
   const collapsedColumns: string = tree ? `1fr ${treeWidth}px` : "1fr";
   body.style.gridTemplateColumns = collapsed ? collapsedColumns : expandedColumns;
+  applyGridChildPlacement(body, collapsed, tree);
+}
+
+function applyGridChildPlacement(body: HTMLElement, collapsed: boolean, tree: boolean): void {
+  body.querySelectorAll<HTMLElement>(":scope > *").forEach((child: HTMLElement): void => {
+    if (child.hasAttribute(PLUGIN_PANEL_ATTR)) {
+      child.style.gridColumn = collapsed ? "" : "1";
+      return;
+    }
+
+    if (child.matches("[data-plugin-sidebar]")) {
+      child.style.gridColumn = tree ? (collapsed ? "2" : "3") : "";
+      return;
+    }
+
+    if (child.matches(".scrim")) {
+      child.style.gridColumn = "";
+      return;
+    }
+
+    if (isMainContentChild(child)) {
+      child.style.gridColumn = collapsed ? "1" : "2";
+    }
+  });
+}
+
+function isMainContentChild(child: HTMLElement): boolean {
+  return child.matches(
+    [
+      "main",
+      ".main",
+      ".prompt-region",
+      "[data-main]",
+      "[data-plugin-chat-root]",
+      "[data-plugin-composer-root]",
+      "[data-view='workspace']",
+      "[data-view='picker']",
+    ].join(","),
+  );
 }
 
 export function bindResizer(wrap: HTMLElement, app: AppElement, sidebarBridge: SidebarBridge): () => void {
