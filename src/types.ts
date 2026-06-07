@@ -84,6 +84,7 @@ export type PluginContext = {
 };
 
 export type AppElement = HTMLElement & {
+  piWebSidebar?: PiWebSidebarGlobal;
   workspaceList?: SidebarWorkspace[];
   sidebarOpenWorkspaceId?: string;
   sidebarSortableCleanup?: () => void;
@@ -107,6 +108,8 @@ export type SidebarRxChannels = {
 
 export type PiWebSidebarGlobal = {
   channels: SidebarRxChannels;
+  getSnapshot(): SidebarSnapshot;
+  refresh(): Promise<SidebarWorkspace[]>;
 };
 
 export type SidebarBridge = {

@@ -702,11 +702,16 @@ describe("pi-web-sidebar plugin", () => {
     );
 
     controller.mount();
-    const rxChannels = globalThis.piWebSidebar?.channels;
+    const sidebarApi = globalThis.piWebSidebar;
+    const rxChannels = sidebarApi?.channels;
 
-    if (!rxChannels) {
-      throw new Error("missing RxJS sidebar channels");
+    if (!sidebarApi || !rxChannels) {
+      throw new Error("missing sidebar API");
     }
+
+    expect(app.piWebSidebar).toBe(sidebarApi);
+    expect(sidebarApi.getSnapshot().workspaceCount).toBe(1);
+    expect(sidebarApi.getSnapshot().activeSessionId).toBe("");
 
     const stateSubscription = state$.subscribe((state) => states.push(state));
     const eventSubscription = events$.subscribe((event) => events.push(event));
@@ -714,6 +719,7 @@ describe("pi-web-sidebar plugin", () => {
     const rxStateSubscription = rxChannels.state$.subscribe((state) => rxStates.push(state));
     const rxEventSubscription = rxChannels.events$.subscribe((event) => rxEvents.push(event));
     const rxPiStatusSubscription = rxChannels.piStatus$.subscribe((status) => rxPiStatuses.push(status));
+    expect(await sidebarApi.refresh()).toEqual(app.testWorkspaces);
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
@@ -729,9 +735,12 @@ describe("pi-web-sidebar plugin", () => {
     expect(rxEvents.some((event) => event.type === "pi-status")).toBe(true);
 
     controller.dispose();
+    expect(states.at(-1)?.element).toBeNull();
+    expect(events.at(-1)?.snapshot.element).toBeNull();
     expect((state$ as TestSubject<import("./src/types").SidebarSnapshot>).closed).toBe(false);
     expect((events$ as TestSubject<import("./src/types").SidebarActionEvent>).closed).toBe(false);
     expect(globalThis.piWebSidebar).toBeUndefined();
+    expect(app.piWebSidebar).toBeUndefined();
 
     const secondController = createSidebarController(app, testContext(app));
     secondController.mount();
