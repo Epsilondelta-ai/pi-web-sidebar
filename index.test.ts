@@ -532,23 +532,23 @@ describe("pi-web-sidebar plugin", () => {
     saveDeferred.resolve({});
   });
 
-  test("loadWorkspaces uses local workspace cache before backend cache latency", async () => {
+  test("loadWorkspaces uses backend-validated cache before local stale cache", async () => {
     const app = setupApp();
     app.testWorkspaces = [];
     app.workspaceList = [];
-    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [] }];
-    const backendDeferred = deferred<unknown>();
+    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [{ id: "stale" }] }];
+    const backendWorkspaces: SidebarWorkspace[] = [{ id: "backend", name: "backend", path: "/backend", sessions: [] }];
     const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
       if (method === "load-workspace-cache") {
-        return backendDeferred.promise;
+        return { workspaces: backendWorkspaces };
       }
 
       throw new Error(`unexpected backend call: ${method}`);
     } });
     localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
 
-    expect(await loadWorkspaces(context, app)).toEqual(cachedWorkspaces);
-    backendDeferred.resolve({ workspaces: [] });
+    expect(await loadWorkspaces(context, app)).toEqual(backendWorkspaces);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("backend");
   });
 
   test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {
@@ -974,6 +974,12 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
+
+    await Promise.resolve();
+    await Promise.resolve();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", title: "future" }] }];
+    await controller.refresh();
+    expect(app.querySelector("[data-session='s2']")).toBeTruthy();
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {

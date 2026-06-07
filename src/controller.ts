@@ -1,4 +1,4 @@
-import { loadPiStatus, loadWorkspaces } from "./api";
+import { loadPiStatus, loadWorkspaces, saveWorkspaceCache } from "./api";
 import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
@@ -8,7 +8,7 @@ import { applySidebarGrid, bindHeaderSidebarToggle, bindResizer, restoreSidebarL
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { readStoredObject, storeJson } from "./storage";
-import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
+import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR, WORKSPACE_CACHE_KEY } from "./constants";
 import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace, SubscriptionLike } from "./types";
 
 type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
@@ -37,6 +37,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let hostWorkspaceRecheckAttempts: number = 0;
   let channelSubscriptions: SubscriptionLike[] = [];
   let optimisticSessionsByWorkspace: Record<string, SidebarSession[]> = {};
+  const clearedSessionWorkspaceIds: Set<string> = new Set();
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
@@ -132,12 +133,18 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
       applyActiveEnd(stringValue(detail?.workspaceId), stringValue(detail?.sessionId));
     };
+    const handleWorkspaceCleared = (event: Event): void => {
+      const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
+      applyWorkspaceSessionsCleared(stringValue(detail?.workspaceId));
+    };
 
     app.addEventListener("pi-web-sidebar:session-created", handleCreated);
     app.addEventListener("pi-web-sidebar:session-deleted", handleDeleted);
+    app.addEventListener("pi-web-sidebar:workspace-sessions-cleared", handleWorkspaceCleared);
     sidebarSessionEventsCleanup = (): void => {
       app.removeEventListener("pi-web-sidebar:session-created", handleCreated);
       app.removeEventListener("pi-web-sidebar:session-deleted", handleDeleted);
+      app.removeEventListener("pi-web-sidebar:workspace-sessions-cleared", handleWorkspaceCleared);
     };
   }
 
@@ -185,6 +192,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
+    clearedSessionWorkspaceIds.delete(workspaceId);
     const session: SidebarSession = { id: sessionId, title: "New chat", active: true, status };
     optimisticSessionsByWorkspace = {
       ...optimisticSessionsByWorkspace,
@@ -220,6 +228,19 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarBridge.emitState("active.end");
   }
 
+  function applyWorkspaceSessionsCleared(workspaceId: string): void {
+    if (!workspaceId) {
+      return;
+    }
+
+    clearedSessionWorkspaceIds.add(workspaceId);
+    optimisticSessionsByWorkspace = { ...optimisticSessionsByWorkspace, [workspaceId]: [] };
+    workspaces = withoutWorkspaceSessions(workspaces, app, workspaceId);
+    app.workspaceList = withoutWorkspaceSessions(app.workspaceList || [], app, workspaceId);
+    persistWorkspaceCache(workspaces);
+    renderCurrentWorkspaces();
+  }
+
   function reconcileActiveWorkspace(): void {
     const sessionId: string = app.dataset.activeSessionId || "";
     const workspaceId: string = findWorkspaceIdForSession(workspaces, sessionId);
@@ -227,6 +248,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     if (workspaceId) {
       app.dataset.activeWorkspaceId = workspaceId;
       storePersistedSelection(sessionId, workspaceId);
+      return;
+    }
+
+    if (sessionId) {
+      app.dataset.activeSessionId = "";
+      storePersistedSelection("", app.dataset.activeWorkspaceId || "");
     }
   }
 
@@ -319,7 +346,20 @@ export function createSidebarController(app: AppElement, context: PluginContext 
         return workspaces;
       }
 
-      workspaces = mergeOptimisticSessions(nextWorkspaces, optimisticSessionsByWorkspace);
+      const refreshedWorkspaces: SidebarWorkspace[] = options.emptySessionsForWorkspaceId
+        ? withoutWorkspaceSessions(nextWorkspaces, app, options.emptySessionsForWorkspaceId)
+        : nextWorkspaces;
+      workspaces = clearWorkspaceSessionsById(
+        mergeOptimisticSessions(refreshedWorkspaces, optimisticSessionsByWorkspace),
+        clearedSessionWorkspaceIds,
+        app,
+      );
+      if (clearedSessionWorkspaceIds.size > 0) {
+        persistWorkspaceCache(workspaces);
+      }
+      if (options.emptySessionsForWorkspaceId) {
+        clearedSessionWorkspaceIds.delete(options.emptySessionsForWorkspaceId);
+      }
       reconcileActiveWorkspace();
       renderCurrentWorkspaces();
       sidebarBridge.emitEvent("refresh-workspaces", { workspaceCount: workspaces.length });
@@ -328,6 +368,13 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     return workspaces;
+  }
+
+  function persistWorkspaceCache(nextWorkspaces: SidebarWorkspace[]): void {
+    storeJson(WORKSPACE_CACHE_KEY, { workspaces: nextWorkspaces });
+    void saveWorkspaceCache(context, nextWorkspaces).catch((error: unknown): void => {
+      console.warn("pi-web-sidebar failed to persist workspace cache", error);
+    });
   }
 
   function startDrag(item: DragItem): void {
@@ -518,6 +565,20 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   return { mount, dispose, render, refresh: refreshCurrentWorkspaces, get element(): HTMLElement | null { return wrap; } };
+}
+
+function clearWorkspaceSessionsById(
+  workspaces: SidebarWorkspace[],
+  workspaceIds: Set<string>,
+  app: AppElement,
+): SidebarWorkspace[] {
+  if (workspaceIds.size === 0) {
+    return workspaces;
+  }
+
+  return workspaces.reduce((nextWorkspaces: SidebarWorkspace[], workspace: SidebarWorkspace): SidebarWorkspace[] => {
+    return workspaceIds.has(workspace.id) ? withoutWorkspaceSessions(nextWorkspaces, app, workspace.id) : nextWorkspaces;
+  }, workspaces);
 }
 
 function withoutWorkspaceSessions(

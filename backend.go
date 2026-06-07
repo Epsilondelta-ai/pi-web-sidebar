@@ -63,6 +63,8 @@ func main() {
 		result, err = loadWorkspaceCache()
 	case "save-workspace-cache":
 		result, err = saveWorkspaceCache(data)
+	case "delete-workspace-sessions":
+		result, err = deleteWorkspaceSessions(stringInput(data, "workspaceId"))
 	case "pi-status":
 		result, err = checkPiStatus()
 	default:
@@ -265,7 +267,111 @@ func loadWorkspaceCache() (request, error) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return request{}, err
 	}
-	return result, nil
+	return validateWorkspaceCache(result), nil
+}
+
+func validateWorkspaceCache(cache request) request {
+	workspaces, ok := cache["workspaces"].([]any)
+	if !ok {
+		return cache
+	}
+
+	validated := make([]any, 0, len(workspaces))
+	for _, item := range workspaces {
+		workspace, ok := item.(map[string]any)
+		if !ok {
+			validated = append(validated, item)
+			continue
+		}
+
+		workspacePath := strings.TrimSpace(stringFromAny(workspace["path"]))
+		sessions, ok := workspace["sessions"].([]any)
+		if workspacePath == "" || !ok || len(sessions) == 0 {
+			validated = append(validated, workspace)
+			continue
+		}
+
+		validSessionIDs := sessionIDsForWorkspacePath(workspacePath)
+		if validSessionIDs == nil {
+			validated = append(validated, workspace)
+			continue
+		}
+
+		filteredSessions := make([]any, 0, len(sessions))
+		for _, sessionItem := range sessions {
+			session, ok := sessionItem.(map[string]any)
+			if !ok {
+				continue
+			}
+			if validSessionIDs[stringFromAny(session["id"])] {
+				filteredSessions = append(filteredSessions, session)
+			}
+		}
+
+		workspace["sessions"] = filteredSessions
+		workspace["sessionCount"] = len(filteredSessions)
+		workspace["live"] = workspaceHasLiveSession(filteredSessions)
+		validated = append(validated, workspace)
+	}
+
+	cache["workspaces"] = validated
+	return cache
+}
+
+func sessionIDsForWorkspacePath(workspacePath string) map[string]bool {
+	cleanWorkspacePath, err := cleanPath(workspacePath)
+	if err != nil {
+		return nil
+	}
+
+	sessionDir := piSessionDirForCWD(cleanWorkspacePath)
+	if sessionDir == "" {
+		return nil
+	}
+
+	ids := map[string]bool{}
+	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+
+		id := sessionIDFromFile(path)
+		if id != "" {
+			ids[id] = true
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ids
+		}
+		return nil
+	}
+	return ids
+}
+
+func sessionIDFromFile(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	var header map[string]any
+	if err := decoder.Decode(&header); err != nil {
+		return ""
+	}
+	return stringFromAny(header["id"])
+}
+
+func workspaceHasLiveSession(sessions []any) bool {
+	for _, sessionItem := range sessions {
+		session, ok := sessionItem.(map[string]any)
+		if ok && (session["live"] == true || session["active"] == true) {
+			return true
+		}
+	}
+	return false
 }
 
 func saveWorkspaceCache(data request) (request, error) {
@@ -288,6 +394,75 @@ func saveWorkspaceCache(data request) (request, error) {
 		return request{}, err
 	}
 	return request{"path": path}, nil
+}
+
+func deleteWorkspaceSessions(workspaceID string) (request, error) {
+	workspacePath, err := workspacePathFromCache(workspaceID)
+	if err != nil {
+		return request{}, err
+	}
+
+	sessionDir := piSessionDirForCWD(workspacePath)
+	if sessionDir == "" {
+		return request{}, errors.New("session dir is empty")
+	}
+	if err := os.RemoveAll(sessionDir); err != nil {
+		return request{}, err
+	}
+
+	return request{"deleted": true, "path": sessionDir, "workspaceId": workspaceID}, nil
+}
+
+func workspacePathFromCache(workspaceID string) (string, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return "", errors.New("workspace id is required")
+	}
+
+	cache, err := loadWorkspaceCache()
+	if err != nil {
+		return "", err
+	}
+
+	workspaces, _ := cache["workspaces"].([]any)
+	for _, item := range workspaces {
+		workspace, ok := item.(map[string]any)
+		if !ok || stringFromAny(workspace["id"]) != workspaceID {
+			continue
+		}
+
+		workspacePath := strings.TrimSpace(stringFromAny(workspace["path"]))
+		if workspacePath == "" {
+			return "", fmt.Errorf("workspace %s has no path", workspaceID)
+		}
+		return cleanPath(workspacePath)
+	}
+
+	return "", fmt.Errorf("workspace not found: %s", workspaceID)
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func piSessionDirForCWD(cwd string) string {
+	root := defaultPiSessionDir()
+	if root == "" {
+		return ""
+	}
+
+	safePath := "--" + strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(strings.TrimLeft(cwd, "/\\")) + "--"
+	return filepath.Join(root, safePath)
+}
+
+func defaultPiSessionDir() string {
+	if value := os.Getenv("PI_CODING_AGENT_SESSION_DIR"); value != "" {
+		return value
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".pi", "agent", "sessions")
+	}
+	return ""
 }
 
 func workspaceCacheFile() (string, error) {

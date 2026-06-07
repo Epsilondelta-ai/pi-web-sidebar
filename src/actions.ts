@@ -127,7 +127,10 @@ async function handleMutatingWorkspaceAction(
 
   if (action === "delete-workspace-sessions") {
     const workspaceId: string | undefined = target.dataset.workspace;
-    await deleteWorkspaceSessionList(app, workspaceId);
+    dispatchSidebarEvent(app, "pi-web-sidebar:workspace-sessions-cleared", { workspaceId: workspaceId || "" });
+    clearWorkspaceSessionSelection(app, workspaceId || "");
+    clearWorkspaceSessionDom(app, workspaceId || "");
+    await deleteWorkspaceSessionList(app, context, workspaceId);
     await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
     sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: workspaceId || "" });
     return true;
@@ -303,6 +306,50 @@ function workspaceSessionIds(app: AppElement, workspaceId: string): Set<string> 
   return new Set((workspace?.sessions || []).map((session): string => session.id));
 }
 
+function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
+  if (!workspaceId) {
+    return;
+  }
+
+  const escapedWorkspaceId: string = cssEscape(workspaceId);
+  app.workspaceList = (app.workspaceList || []).map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    return workspace.id === workspaceId ? { ...workspace, sessions: [], sessionCount: 0, live: false } : workspace;
+  });
+
+  app.querySelectorAll(`[data-workspace='${escapedWorkspaceId}'][data-session]`).forEach((node: Element): void => {
+    node.remove();
+  });
+
+  const group: HTMLElement | null = app.querySelector(`[data-workspace-group='${escapedWorkspaceId}']`);
+  const sessions: HTMLElement | null = group?.querySelector(".sessions") || null;
+  if (!sessions) {
+    return;
+  }
+
+  sessions.querySelectorAll(".session-row[data-session], .clear-sessions-row").forEach((row: Element): void => row.remove());
+
+  if (!sessions.querySelector(".sessions-empty")) {
+    const empty: HTMLDivElement = document.createElement("div");
+    empty.className = "sessions-empty";
+    empty.textContent = "no sessions yet";
+    sessions.prepend(empty);
+  }
+}
+
+function clearWorkspaceSessionSelection(app: AppElement, workspaceId: string): void {
+  const activeWorkspaceId: string = app.dataset.activeWorkspaceId || "";
+  const activeSessionId: string = app.dataset.activeSessionId || "";
+  if (activeWorkspaceId && activeWorkspaceId !== workspaceId && !workspaceSessionIds(app, workspaceId).has(activeSessionId)) {
+    return;
+  }
+
+  app.dataset.activeSessionId = "";
+  publishSelectedSessionId(null);
+  try {
+    localStorage.setItem(ACTIVE_SESSION_KEY, "");
+  } catch {}
+}
+
 function persistSelectedSession(target: HTMLElement, app: AppElement): void {
   const sessionId: string = target.dataset.session || "";
   const workspaceId: string = target.dataset.workspace || "";
@@ -332,8 +379,12 @@ function publishSelectedSession(target: HTMLElement): void {
   const sessionId: string = target.dataset.session || "";
 
   if (sessionId) {
-    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
+    publishSelectedSessionId(sessionId);
   }
+}
+
+function publishSelectedSessionId(sessionId: string | null): void {
+  globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
 }
 
 function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {

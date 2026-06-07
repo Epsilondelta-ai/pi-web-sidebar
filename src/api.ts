@@ -39,12 +39,17 @@ export async function createWorkspaceSession(app: AppElement, workspaceId?: stri
   await app.newSession?.(workspaceId);
 }
 
-export async function deleteWorkspaceSessionList(app: AppElement, workspaceId?: string): Promise<void> {
+export async function deleteWorkspaceSessionList(
+  app: AppElement,
+  context: PluginContext,
+  workspaceId?: string,
+): Promise<void> {
   if (!workspaceId) {
     return;
   }
 
   await app.deleteWorkspaceSessions?.(workspaceId);
+  await context.backend?.("delete-workspace-sessions", { data: { workspaceId } });
 }
 
 export async function renameSessionById(app: AppElement, sessionId: string): Promise<SessionRenameResponse> {
@@ -119,21 +124,15 @@ function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWo
 }
 
 async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorkspace[]> {
-  const localWorkspaces: SidebarWorkspace[] = readWorkspaceCache();
-
-  if (localWorkspaces.length > 0) {
-    return localWorkspaces;
-  }
-
   const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
 
-  if (!isRecord(result) || !Array.isArray(result.workspaces)) {
-    return [];
+  if (isRecord(result) && Array.isArray(result.workspaces)) {
+    const backendWorkspaces: SidebarWorkspace[] = result.workspaces.filter(isSidebarWorkspace);
+    storeWorkspaceCache(backendWorkspaces);
+    return backendWorkspaces;
   }
 
-  const backendWorkspaces: SidebarWorkspace[] = result.workspaces.filter(isSidebarWorkspace);
-  storeWorkspaceCache(backendWorkspaces);
-  return backendWorkspaces;
+  return readWorkspaceCache();
 }
 
 function readWorkspaceCache(): SidebarWorkspace[] {
