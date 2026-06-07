@@ -9,6 +9,29 @@ export function installFallbackDragStyles(): void {
   const style: HTMLStyleElement = document.createElement("style");
   style.id = FALLBACK_STYLE_ID;
   style.textContent = `
+    [data-pi-web-sidebar-plugin] {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 4px;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    [data-pi-web-sidebar-plugin][hidden] {
+      display: none !important;
+    }
+    [data-pi-web-sidebar-plugin] .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    [data-pi-web-sidebar-plugin] .workspace-group,
+    [data-pi-web-sidebar-plugin] .session-row[data-session] {
+      min-width: 0;
+    }
     [data-pi-web-sidebar-plugin] .workspace-group,
     [data-pi-web-sidebar-plugin] .session-row[data-session] {
       transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;

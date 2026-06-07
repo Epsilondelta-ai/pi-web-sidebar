@@ -27,6 +27,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   function mount(): void {
     const body: HTMLElement | null = app.querySelector(".app-body");
 
+    installFallbackDragStyles();
+
     if (!body) {
       throw new Error("pi-web-sidebar requires .app-body");
     }
@@ -46,14 +48,14 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     installFallbackDragStyles();
     app.dataset.sidebar = app.dataset.sidebar || "open";
+    restorePersistedSelection();
+    restoreSidebarLayout(app);
     resizeCleanup = bindResizer(wrap, app, sidebarBridge);
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
     bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
-    restorePersistedSelection();
     bindPiWebChannels();
     renderCurrentWorkspaces();
-    restoreSidebarLayout(app);
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
     sidebarBridge.emitState("mounted");

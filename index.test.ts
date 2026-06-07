@@ -711,6 +711,21 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("abcdefghijkl...");
   });
 
+  test("workspace rows only show green indicators when active", async () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", title: "running", status: "running" }] },
+      { id: "w2", name: "two", live: false, sessions: [{ id: "s2", title: "running", status: "running" }] },
+    ];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
+  });
+
   test("session rows use active or inactive left indicators without waiting text", async () => {
     const app = setupApp();
     app.testWorkspaces = [{
@@ -718,6 +733,7 @@ describe("pi-web-sidebar plugin", () => {
       name: "one",
       sessions: [
         { id: "live", title: "live", status: "running" },
+        { id: "completed", title: "completed", active: true, unreadCompleted: true },
         { id: "waiting", title: "waiting", kind: "waiting", status: "waiting", unread: true },
       ],
     }];
@@ -728,6 +744,10 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
     expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
+    expect(app.querySelector("[data-session='completed'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='completed'] .session-indicator.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='completed'] .session-indicator").title).toBe("session inactive");
+    expect(requireElement<HTMLElement>(app, "[data-session='completed'] .title").textContent).toBe("completed");
     expect(app.querySelector("[data-session='waiting'] .session-indicator.idle")).toBeTruthy();
     expect(app.querySelector("[data-session='waiting'] .session-indicator.live")).toBeFalsy();
     expect(app.querySelector("[data-session='waiting'] .session-indicator.unread")).toBeFalsy();
@@ -763,6 +783,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='s1'] .session-menu [data-action='rename-session']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1'] .session-menu [data-action='delete-session']")).toBeTruthy();
     const sidebarStyle = document.getElementById("pi-web-sidebar-fallback-drag-style")?.textContent;
+    expect(sidebarStyle).toContain("[data-pi-web-sidebar-plugin] {");
+    expect(sidebarStyle).toContain("grid-template-columns: minmax(0, 1fr) 4px");
     expect(sidebarStyle).toContain(".session-row[data-session]");
     expect(sidebarStyle).toContain("padding-left: 12px");
   });
