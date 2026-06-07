@@ -77,10 +77,23 @@ export type PiWebRegistry = {
 
 export type BackendCall = (method: string, input: { workspaceId?: string; data?: Record<string, unknown> }) => Promise<unknown>;
 
+export type PluginEvent = {
+  id?: number;
+  type: string;
+  payload?: unknown;
+  at?: string;
+};
+
+export type PluginEvents = {
+  publish(channel: string, type: string, payload?: unknown): Promise<unknown>;
+  subscribe(channel: string, eventTypes: string[], callback: (event: PluginEvent) => void): () => void;
+};
+
 export type PluginContext = {
   app?: AppElement;
   initialWorkspaces?: SidebarWorkspace[];
   backend?: BackendCall;
+  events?: PluginEvents;
 };
 
 export type AppElement = HTMLElement & {

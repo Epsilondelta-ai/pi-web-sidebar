@@ -13,6 +13,14 @@ import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSes
 
 type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string };
 
+type ActiveStatePayload = {
+  active?: boolean;
+  sessionId?: string;
+  source?: string;
+  status?: string;
+  workspaceId?: string;
+};
+
 const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
 const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
 
@@ -21,11 +29,14 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let draggedItem: DragItem | null = null;
   let resizeCleanup: (() => void) | undefined;
   let sidebarToggleCleanup: (() => void) | undefined;
+  let sidebarSessionEventsCleanup: (() => void) | undefined;
+  let pluginEventsCleanup: (() => void) | undefined;
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let hostWorkspaceRecheckTimer: ReturnType<typeof setTimeout> | undefined;
   let hostWorkspaceRecheckAttempts: number = 0;
   let channelSubscriptions: SubscriptionLike[] = [];
+  let optimisticSessionsByWorkspace: Record<string, SidebarSession[]> = {};
   let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
@@ -58,6 +69,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
     bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
+    bindSidebarSessionEvents();
+    bindPluginEventChannels();
     bindPiWebChannels();
     renderCurrentWorkspaces();
     sidebarToggleCleanup?.();
@@ -75,6 +88,10 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     resizeCleanup = undefined;
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = undefined;
+    sidebarSessionEventsCleanup?.();
+    sidebarSessionEventsCleanup = undefined;
+    pluginEventsCleanup?.();
+    pluginEventsCleanup = undefined;
     channelSubscriptions.forEach((subscription: SubscriptionLike): void => subscription.unsubscribe());
     channelSubscriptions = [];
     if (refreshTimer) {
@@ -102,6 +119,46 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     app.dataset.activeWorkspaceId = app.dataset.activeWorkspaceId || localStorage.getItem(ACTIVE_WORKSPACE_KEY) || "";
   }
 
+  function bindSidebarSessionEvents(): void {
+    if (sidebarSessionEventsCleanup) {
+      return;
+    }
+
+    const handleCreated = (event: Event): void => {
+      const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
+      applyActiveStart(stringValue(detail?.workspaceId), stringValue(detail?.sessionId), stringValue(detail?.status) || "active");
+    };
+    const handleDeleted = (event: Event): void => {
+      const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
+      applyActiveEnd(stringValue(detail?.workspaceId), stringValue(detail?.sessionId));
+    };
+
+    app.addEventListener("pi-web-sidebar:session-created", handleCreated);
+    app.addEventListener("pi-web-sidebar:session-deleted", handleDeleted);
+    sidebarSessionEventsCleanup = (): void => {
+      app.removeEventListener("pi-web-sidebar:session-created", handleCreated);
+      app.removeEventListener("pi-web-sidebar:session-deleted", handleDeleted);
+    };
+  }
+
+  function bindPluginEventChannels(): void {
+    if (pluginEventsCleanup || !context.events) {
+      return;
+    }
+
+    pluginEventsCleanup = context.events.subscribe("active-state", ["active.start", "active.end"], (event): void => {
+      const payload: ActiveStatePayload | undefined = isRecord(event.payload) ? event.payload as ActiveStatePayload : undefined;
+
+      if (event.type === "active.start") {
+        applyActiveStart(stringValue(payload?.workspaceId), stringValue(payload?.sessionId), stringValue(payload?.status) || "active");
+      }
+
+      if (event.type === "active.end") {
+        applyActiveEnd(stringValue(payload?.workspaceId), stringValue(payload?.sessionId));
+      }
+    });
+  }
+
   function bindPiWebChannels(): void {
     if (channelSubscriptions.length > 0 || !globalThis.piWeb) {
       return;
@@ -121,6 +178,46 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     reconcileActiveWorkspace();
     storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
     renderCurrentWorkspaces();
+  }
+
+  function applyActiveStart(workspaceId: string, sessionId: string, status: string): void {
+    if (!workspaceId || !sessionId) {
+      return;
+    }
+
+    const session: SidebarSession = { id: sessionId, title: "New chat", active: true, status };
+    optimisticSessionsByWorkspace = {
+      ...optimisticSessionsByWorkspace,
+      [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
+    };
+    workspaces = upsertWorkspaceSession(workspaces, workspaceId, session);
+    app.dataset.activeSessionId = sessionId;
+    app.dataset.activeWorkspaceId = workspaceId;
+    app.sidebarOpenWorkspaceId = workspaceId;
+    storePersistedSelection(sessionId, workspaceId);
+    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
+    renderCurrentWorkspaces();
+    sidebarBridge.emitEvent("active.start", { sessionId, workspaceId });
+    sidebarBridge.emitState("active.start");
+  }
+
+  function applyActiveEnd(workspaceId: string, sessionId: string): void {
+    if (!sessionId) {
+      return;
+    }
+
+    optimisticSessionsByWorkspace = removeOptimisticSession(optimisticSessionsByWorkspace, sessionId);
+    workspaces = removeWorkspaceSession(workspaces, workspaceId, sessionId);
+
+    if (app.dataset.activeSessionId === sessionId) {
+      app.dataset.activeSessionId = "";
+      storePersistedSelection("", app.dataset.activeWorkspaceId || "");
+      globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next(null);
+    }
+
+    renderCurrentWorkspaces();
+    sidebarBridge.emitEvent("active.end", { sessionId, workspaceId });
+    sidebarBridge.emitState("active.end");
   }
 
   function reconcileActiveWorkspace(): void {
@@ -222,7 +319,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
         return workspaces;
       }
 
-      workspaces = nextWorkspaces;
+      workspaces = mergeOptimisticSessions(nextWorkspaces, optimisticSessionsByWorkspace);
       reconcileActiveWorkspace();
       renderCurrentWorkspaces();
       sidebarBridge.emitEvent("refresh-workspaces", { workspaceCount: workspaces.length });
@@ -466,6 +563,82 @@ function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: st
   })?.id || "";
 }
 
+function upsertWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: string, session: SidebarSession): SidebarWorkspace[] {
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    if (workspace.id !== workspaceId) {
+      return { ...workspace, sessions: markSessionListActive(workspace.sessions || [], session.id) };
+    }
+
+    const existingSessions: SidebarSession[] = (workspace.sessions || []).filter((item): boolean => item.id !== session.id);
+    const sessions: SidebarSession[] = [session, ...markSessionListActive(existingSessions, "")];
+    return { ...workspace, live: true, sessionCount: sessions.length, sessions };
+  });
+}
+
+function removeWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: string, sessionId: string): SidebarWorkspace[] {
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    if (workspaceId && workspace.id !== workspaceId) {
+      return workspace;
+    }
+
+    const sessions: SidebarSession[] = (workspace.sessions || []).filter((session): boolean => session.id !== sessionId);
+    return { ...workspace, live: workspaceHasLiveSession(sessions), sessionCount: sessions.length, sessions };
+  });
+}
+
+function mergeOptimisticSessions(
+  workspaces: SidebarWorkspace[],
+  optimisticSessionsByWorkspace: Record<string, SidebarSession[]>,
+): SidebarWorkspace[] {
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    const optimisticSessions: SidebarSession[] = optimisticSessionsByWorkspace[workspace.id] || [];
+
+    if (optimisticSessions.length === 0) {
+      return workspace;
+    }
+
+    const existingIds: Set<string> = new Set((workspace.sessions || []).map((session): string => session.id));
+    const missingSessions: SidebarSession[] = optimisticSessions.filter((session): boolean => !existingIds.has(session.id));
+    const sessions: SidebarSession[] = [...missingSessions, ...(workspace.sessions || [])];
+    return { ...workspace, live: workspaceHasLiveSession(sessions), sessionCount: sessions.length, sessions };
+  });
+}
+
+function removeOptimisticSession(
+  optimisticSessionsByWorkspace: Record<string, SidebarSession[]>,
+  sessionId: string,
+): Record<string, SidebarSession[]> {
+  const next: Record<string, SidebarSession[]> = {};
+
+  for (const [workspaceId, sessions] of Object.entries(optimisticSessionsByWorkspace)) {
+    const remainingSessions: SidebarSession[] = sessions.filter((session): boolean => session.id !== sessionId);
+
+    if (remainingSessions.length > 0) {
+      next[workspaceId] = remainingSessions;
+    }
+  }
+
+  return next;
+}
+
+function markSessionListActive(sessions: SidebarSession[], activeSessionId: string): SidebarSession[] {
+  return sessions.map((session): SidebarSession => {
+    return { ...session, active: !!activeSessionId && session.id === activeSessionId };
+  });
+}
+
+function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
+  return sessions.some((session): boolean => {
+    const status: string = (session.status || "").toLowerCase();
+
+    if (session.unreadCompleted || ["complete", "completed", "done", "failed", "success"].includes(status)) {
+      return false;
+    }
+
+    return !!(session.active || session.live || ["active", "live", "running", "thinking"].includes(status));
+  });
+}
+
 function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
   return workspaces.map((workspace: SidebarWorkspace): string => {
     const sessions: string = (workspace.sessions || []).map((session: SidebarSession): string => {
@@ -485,6 +658,10 @@ function storePersistedSelection(sessionId: string, workspaceId: string): void {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isSidebarWorkspace(value: unknown): value is SidebarWorkspace {

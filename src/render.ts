@@ -94,7 +94,7 @@ function createWorkspaceStack(workspace: SidebarWorkspace, active: boolean): HTM
   stack.className = "ws-stack";
   name.className = "ws-name";
   dot.className = "dot";
-  dot.classList.toggle("live", active || !!workspace.live);
+  dot.classList.toggle("live", active && (workspaceHasActiveSession(workspace) || !!workspace.live));
   label.className = "label";
   label.textContent = workspace.name || workspace.path || workspace.id;
   path.className = "ws-path";

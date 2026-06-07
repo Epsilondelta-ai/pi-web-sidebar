@@ -116,9 +116,12 @@ async function handleMutatingWorkspaceAction(
   }
 
   if (action === "new-session") {
-    await createWorkspaceSession(app, target.dataset.workspace);
+    const workspaceId: string = target.dataset.workspace || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup || "";
+    const existingSessionIds: Set<string> = workspaceSessionIds(app, workspaceId);
+    await createWorkspaceSession(app, workspaceId);
+    await createSidebarSession(app, context, workspaceId, nextWorkspaceSessionId(app, workspaceId, existingSessionIds));
     await refreshWorkspaces();
-    sidebarBridge.emitEvent("new-session", { workspaceId: target.dataset.workspace || "" });
+    sidebarBridge.emitEvent("new-session", { workspaceId });
     return true;
   }
 
@@ -176,7 +179,7 @@ async function handleSessionAction(
   }
 
   if (action === "delete-session") {
-    await deleteSidebarSession(app, target.closest(".session-row"));
+    await deleteSidebarSession(app, context, target.closest(".session-row"));
     await refreshWorkspaces();
     sidebarBridge.emitEvent("delete-session", { sessionId: target.closest<HTMLElement>(".session-row")?.dataset.session || "" });
     return true;
@@ -184,7 +187,9 @@ async function handleSessionAction(
 
   if (action === "select-session") {
     markSelectedSession(target, app);
-    persistSelectedSession(target);
+    markSelectedWorkspace(target, app);
+    persistSelectedSession(target, app);
+    publishSelectedSession(target);
     routeWorkspace(app);
     const detail: Record<string, unknown> = {
       sessionId: target.dataset.session || "",
@@ -237,7 +242,7 @@ async function renameSidebarSession(app: AppElement, row: Element | null): Promi
   await renameSessionById(app, sessionId);
 }
 
-async function deleteSidebarSession(app: AppElement, row: Element | null): Promise<void> {
+async function deleteSidebarSession(app: AppElement, context: PluginContext, row: Element | null): Promise<void> {
   if (!row) {
     return;
   }
@@ -253,17 +258,82 @@ async function deleteSidebarSession(app: AppElement, row: Element | null): Promi
     return;
   }
 
+  const workspaceId: string = htmlRow.dataset.workspace || "";
   await deleteSessionById(app, sessionId);
-  if (app.dataset.activeSessionId === sessionId) {
-    app.dataset.activeSessionId = "";
-  }
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, workspaceId });
+  await context.events?.publish("active-state", "active.end", {
+    active: false,
+    sessionId,
+    source: "pi-web-sidebar",
+    status: "idle",
+    workspaceId,
+  });
 }
 
-function persistSelectedSession(target: HTMLElement): void {
+async function createSidebarSession(
+  app: AppElement,
+  context: PluginContext,
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  if (!workspaceId || !sessionId) {
+    return;
+  }
+
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-created", { sessionId, status: "active", workspaceId });
+  await context.events?.publish("active-state", "active.start", {
+    active: true,
+    sessionId,
+    source: "pi-web-sidebar",
+    status: "active",
+    workspaceId,
+  });
+}
+
+function nextWorkspaceSessionId(app: AppElement, workspaceId: string, existingSessionIds: Set<string>): string {
+  const newSession: string | undefined = [...workspaceSessionIds(app, workspaceId)].find((sessionId): boolean => {
+    return !existingSessionIds.has(sessionId);
+  });
+
+  return newSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`;
+}
+
+function workspaceSessionIds(app: AppElement, workspaceId: string): Set<string> {
+  const workspace = (app.workspaceList || []).find((item): boolean => item.id === workspaceId);
+  return new Set((workspace?.sessions || []).map((session): string => session.id));
+}
+
+function persistSelectedSession(target: HTMLElement, app: AppElement): void {
+  const sessionId: string = target.dataset.session || "";
+  const workspaceId: string = target.dataset.workspace || "";
+  app.dataset.activeSessionId = sessionId;
+  app.dataset.activeWorkspaceId = workspaceId;
+
   try {
-    localStorage.setItem(ACTIVE_SESSION_KEY, target.dataset.session || "");
-    localStorage.setItem(ACTIVE_WORKSPACE_KEY, target.dataset.workspace || "");
+    localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaceId);
   } catch {}
+}
+
+function markSelectedWorkspace(target: HTMLElement, app: AppElement): void {
+  const workspaceId: string = target.dataset.workspace || "";
+  app.querySelectorAll(".workspace-group.active, .ws-row.active").forEach((node: Element): void => {
+    node.classList.remove("active");
+    node.setAttribute("aria-current", "false");
+  });
+  const escapedWorkspaceId: string = cssEscape(workspaceId);
+  app.querySelector<HTMLElement>(`[data-workspace-group='${escapedWorkspaceId}']`)?.classList.add("active");
+  const row: HTMLElement | null = app.querySelector(`[data-workspace='${escapedWorkspaceId}'].ws-row`);
+  row?.classList.add("active");
+  row?.setAttribute("aria-current", "true");
+}
+
+function publishSelectedSession(target: HTMLElement): void {
+  const sessionId: string = target.dataset.session || "";
+
+  if (sessionId) {
+    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
+  }
 }
 
 function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {
@@ -289,6 +359,19 @@ function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {
       openWorkspaceId: app.sidebarOpenWorkspaceId || "",
     },
   }));
+}
+
+function cssEscape(value: string): string {
+  if (typeof globalThis.CSS?.escape === "function") {
+    return CSS.escape(value);
+  }
+
+  return String(value).replace(/['\\]/g, "\\$&");
+}
+
+function dispatchSidebarEvent(app: AppElement, type: string, detail: Record<string, unknown>): void {
+  const CustomEventConstructor: typeof CustomEvent = app.ownerDocument.defaultView?.CustomEvent || CustomEvent;
+  app.dispatchEvent(new CustomEventConstructor(type, { bubbles: true, detail }));
 }
 
 function eventTarget(event: Event): HTMLElement | null {
