@@ -65,6 +65,8 @@ func main() {
 		result, err = saveWorkspaceCache(data)
 	case "delete-workspace-sessions":
 		result, err = deleteWorkspaceSessions(stringInput(data, "workspaceId"))
+	case "delete-sessions":
+		result, err = deleteSessions(stringInput(data, "workspaceId"), stringListInput(data, "sessionIds"))
 	case "pi-status":
 		result, err = checkPiStatus()
 	default:
@@ -109,6 +111,18 @@ func requestData(input request) request {
 func stringInput(input request, key string) string {
 	value, _ := input[key].(string)
 	return value
+}
+
+func stringListInput(input request, key string) []string {
+	items, _ := input[key].([]any)
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		value, _ := item.(string)
+		if strings.TrimSpace(value) != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func listFolders(path string) (folderListing, error) {
@@ -394,6 +408,46 @@ func saveWorkspaceCache(data request) (request, error) {
 		return request{}, err
 	}
 	return request{"path": path}, nil
+}
+
+func deleteSessions(workspaceID string, sessionIDs []string) (request, error) {
+	workspacePath, err := workspacePathFromCache(workspaceID)
+	if err != nil {
+		return request{}, err
+	}
+	if len(sessionIDs) == 0 {
+		return request{"deleted": []string{}, "workspaceId": workspaceID}, nil
+	}
+
+	sessionDir := piSessionDirForCWD(workspacePath)
+	if sessionDir == "" {
+		return request{}, errors.New("session dir is empty")
+	}
+
+	deleteSet := map[string]bool{}
+	for _, sessionID := range sessionIDs {
+		deleteSet[sessionID] = true
+	}
+
+	deleted := []string{}
+	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		id := sessionIDFromFile(path)
+		if !deleteSet[id] {
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		deleted = append(deleted, id)
+		return nil
+	}); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return request{}, err
+	}
+
+	return request{"deleted": deleted, "workspaceId": workspaceID}, nil
 }
 
 func deleteWorkspaceSessions(workspaceID string) (request, error) {

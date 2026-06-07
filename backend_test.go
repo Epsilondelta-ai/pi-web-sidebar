@@ -153,6 +153,56 @@ func piSessionDirForCWDWithRoot(root string, cwd string) string {
 	return filepath.Join(root, safePath)
 }
 
+func TestDeleteSessionsRemovesSelectedSessionFiles(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	deleteFile := filepath.Join(sessionDir, "delete.jsonl")
+	keepFile := filepath.Join(sessionDir, "keep.jsonl")
+	if err := os.WriteFile(deleteFile, []byte(`{"id":"delete-me"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write delete file: %v", err)
+	}
+	if err := os.WriteFile(keepFile, []byte(`{"id":"keep-me"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write keep file: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `"}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := deleteSessions("w1", []string{"delete-me"})
+	if err != nil {
+		t.Fatalf("deleteSessions error = %v", err)
+	}
+	deleted := result["deleted"].([]string)
+	if len(deleted) != 1 || deleted[0] != "delete-me" {
+		t.Fatalf("deleted = %v, want delete-me", deleted)
+	}
+	if _, err := os.Stat(deleteFile); !os.IsNotExist(err) {
+		t.Fatalf("delete file still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Fatalf("keep file missing: %v", err)
+	}
+}
+
 func TestDeleteWorkspaceSessionsRemovesWorkspaceSessionDir(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")

@@ -52,6 +52,19 @@ export async function deleteWorkspaceSessionList(
   await context.backend?.("delete-workspace-sessions", { data: { workspaceId } });
 }
 
+export async function deleteSessionList(
+  app: AppElement,
+  context: PluginContext,
+  workspaceId: string,
+  sessionIds: string[],
+): Promise<void> {
+  for (const sessionId of sessionIds) {
+    await app.deleteSession?.(sessionId);
+  }
+
+  await context.backend?.("delete-sessions", { data: { sessionIds, workspaceId } });
+}
+
 export async function renameSessionById(app: AppElement, sessionId: string): Promise<SessionRenameResponse> {
   await app.renameSession?.(sessionId);
   return {};

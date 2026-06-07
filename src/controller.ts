@@ -16,6 +16,7 @@ type RefreshOptions = { allowEmpty?: boolean; emptySessionsForWorkspaceId?: stri
 type ActiveStatePayload = {
   active?: boolean;
   sessionId?: string;
+  sessionIds?: unknown;
   source?: string;
   status?: string;
   workspaceId?: string;
@@ -127,11 +128,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     const handleCreated = (event: Event): void => {
       const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
-      applyActiveStart(stringValue(detail?.workspaceId), stringValue(detail?.sessionId), stringValue(detail?.status) || "active");
+      applySessionCreated(stringValue(detail?.workspaceId), stringValue(detail?.sessionId));
     };
     const handleDeleted = (event: Event): void => {
       const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
-      applyActiveEnd(stringValue(detail?.workspaceId), stringValue(detail?.sessionId));
+      applyActiveEnd(stringValue(detail?.workspaceId), stringValue(detail?.sessionId), stringListValue(detail?.sessionIds));
     };
     const handleWorkspaceCleared = (event: Event): void => {
       const detail: ActiveStatePayload | undefined = (event as CustomEvent<ActiveStatePayload>).detail;
@@ -161,7 +162,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       }
 
       if (event.type === "active.end") {
-        applyActiveEnd(stringValue(payload?.workspaceId), stringValue(payload?.sessionId));
+        applyActiveEnd(stringValue(payload?.workspaceId), stringValue(payload?.sessionId), stringListValue(payload?.sessionIds));
       }
     });
   }
@@ -187,6 +188,28 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     renderCurrentWorkspaces();
   }
 
+  function applySessionCreated(workspaceId: string, sessionId: string): void {
+    if (!workspaceId || !sessionId) {
+      return;
+    }
+
+    clearedSessionWorkspaceIds.delete(workspaceId);
+    const session: SidebarSession = { id: sessionId, title: "New chat", active: false, status: "idle" };
+    optimisticSessionsByWorkspace = {
+      ...optimisticSessionsByWorkspace,
+      [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
+    };
+    workspaces = upsertWorkspaceSession(workspaces, workspaceId, session);
+    app.dataset.activeSessionId = sessionId;
+    app.dataset.activeWorkspaceId = workspaceId;
+    app.sidebarOpenWorkspaceId = workspaceId;
+    storePersistedSelection(sessionId, workspaceId);
+    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
+    renderCurrentWorkspaces();
+    sidebarBridge.emitEvent("session.created", { sessionId, workspaceId });
+    sidebarBridge.emitState("session.created");
+  }
+
   function applyActiveStart(workspaceId: string, sessionId: string, status: string): void {
     if (!workspaceId || !sessionId) {
       return;
@@ -209,22 +232,25 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarBridge.emitState("active.start");
   }
 
-  function applyActiveEnd(workspaceId: string, sessionId: string): void {
-    if (!sessionId) {
+  function applyActiveEnd(workspaceId: string, sessionId: string, sessionIds: string[] = []): void {
+    const deletedSessionIds: string[] = sessionIds.length > 0 ? sessionIds : [sessionId].filter(Boolean);
+    if (deletedSessionIds.length === 0) {
       return;
     }
 
-    optimisticSessionsByWorkspace = removeOptimisticSession(optimisticSessionsByWorkspace, sessionId);
-    workspaces = removeWorkspaceSession(workspaces, workspaceId, sessionId);
+    for (const deletedSessionId of deletedSessionIds) {
+      optimisticSessionsByWorkspace = removeOptimisticSession(optimisticSessionsByWorkspace, deletedSessionId);
+      workspaces = removeWorkspaceSession(workspaces, workspaceId, deletedSessionId);
+    }
 
-    if (app.dataset.activeSessionId === sessionId) {
+    if (deletedSessionIds.includes(app.dataset.activeSessionId || "")) {
       app.dataset.activeSessionId = "";
       storePersistedSelection("", app.dataset.activeWorkspaceId || "");
       globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next(null);
     }
 
     renderCurrentWorkspaces();
-    sidebarBridge.emitEvent("active.end", { sessionId, workspaceId });
+    sidebarBridge.emitEvent("active.end", { sessionId, sessionIds: deletedSessionIds, workspaceId });
     sidebarBridge.emitState("active.end");
   }
 
@@ -625,14 +651,15 @@ function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: st
 }
 
 function upsertWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: string, session: SidebarSession): SidebarWorkspace[] {
+  const liveSessionId: string = workspaceHasLiveSession([{ ...session, status: session.status || "" }]) ? session.id : "";
   return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
     if (workspace.id !== workspaceId) {
-      return { ...workspace, sessions: markSessionListActive(workspace.sessions || [], session.id) };
+      return { ...workspace, sessions: markSessionListActive(workspace.sessions || [], liveSessionId) };
     }
 
     const existingSessions: SidebarSession[] = (workspace.sessions || []).filter((item): boolean => item.id !== session.id);
     const sessions: SidebarSession[] = [session, ...markSessionListActive(existingSessions, "")];
-    return { ...workspace, live: true, sessionCount: sessions.length, sessions };
+    return { ...workspace, live: workspaceHasLiveSession(sessions), sessionCount: sessions.length, sessions };
   });
 }
 
@@ -719,6 +746,10 @@ function storePersistedSelection(sessionId: string, workspaceId: string): void {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function stringListValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item: unknown): item is string => typeof item === "string") : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

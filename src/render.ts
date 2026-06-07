@@ -222,9 +222,10 @@ function createSessionMenu(session: SidebarSession): HTMLElement {
 function createDeleteWorkspaceSessionsRow(workspaceId: string): HTMLElement {
   const row: HTMLButtonElement = document.createElement("button");
   row.type = "button";
-  row.className = "session-row clear-sessions-row";
+  row.className = "session-row clear-sessions-row danger";
   row.dataset.action = "delete-workspace-sessions";
   row.dataset.workspace = workspaceId;
+  row.setAttribute("aria-label", "delete all sessions in workspace");
   row.innerHTML = '<span class="title">delete all sessions</span>';
   return row;
 }

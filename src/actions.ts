@@ -1,6 +1,6 @@
 import {
   createWorkspaceSession,
-  deleteSessionById,
+  deleteSessionList,
   deleteWorkspaceById,
   deleteWorkspaceSessionList,
   renameSessionById,
@@ -8,7 +8,7 @@ import {
 import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
 import { collapseSidebarLayout, routeWorkspace } from "./layout";
 import { markSelectedSession } from "./render";
-import type { AppElement, PluginContext, SidebarBridge, SidebarWorkspace } from "./types";
+import type { AppElement, PluginContext, SidebarBridge, SidebarSession, SidebarWorkspace } from "./types";
 
 type RefreshWorkspaces = (options?: { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string }) => Promise<SidebarWorkspace[]>;
 
@@ -119,7 +119,7 @@ async function handleMutatingWorkspaceAction(
     const workspaceId: string = target.dataset.workspace || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup || "";
     const existingSessionIds: Set<string> = workspaceSessionIds(app, workspaceId);
     await createWorkspaceSession(app, workspaceId);
-    await createSidebarSession(app, context, workspaceId, nextWorkspaceSessionId(app, workspaceId, existingSessionIds));
+    createSidebarSession(app, workspaceId, nextWorkspaceSessionId(app, workspaceId, existingSessionIds));
     await refreshWorkspaces();
     sidebarBridge.emitEvent("new-session", { workspaceId });
     return true;
@@ -127,12 +127,19 @@ async function handleMutatingWorkspaceAction(
 
   if (action === "delete-workspace-sessions") {
     const workspaceId: string | undefined = target.dataset.workspace;
-    dispatchSidebarEvent(app, "pi-web-sidebar:workspace-sessions-cleared", { workspaceId: workspaceId || "" });
+    const deletedSessions: SidebarSession[] = workspaceSessions(app, workspaceId || "");
+    const deletedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
     clearWorkspaceSessionSelection(app, workspaceId || "");
     clearWorkspaceSessionDom(app, workspaceId || "");
     await deleteWorkspaceSessionList(app, context, workspaceId);
+    dispatchSidebarEvent(app, "pi-web-sidebar:workspace-sessions-cleared", { sessionIds: deletedSessionIds, workspaceId: workspaceId || "" });
+    publishDeletedSessions(workspaceId || "", deletedSessions);
+    sidebarBridge.emitEvent("delete-workspace-sessions", {
+      sessionIds: deletedSessionIds,
+      sessions: deletedSessions,
+      workspaceId: workspaceId || "",
+    });
     await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
-    sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: workspaceId || "" });
     return true;
   }
 
@@ -182,9 +189,14 @@ async function handleSessionAction(
   }
 
   if (action === "delete-session") {
-    await deleteSidebarSession(app, context, target.closest(".session-row"));
+    const deletedSessions: SidebarSession[] = await deleteSidebarSession(app, context, target.closest(".session-row"));
     await refreshWorkspaces();
-    sidebarBridge.emitEvent("delete-session", { sessionId: target.closest<HTMLElement>(".session-row")?.dataset.session || "" });
+    sidebarBridge.emitEvent("delete-session", {
+      sessionId: deletedSessions[0]?.id || "",
+      sessionIds: deletedSessions.map((session: SidebarSession): string => session.id),
+      sessions: deletedSessions,
+      workspaceId: deletedSessions[0] ? target.closest<HTMLElement>(".session-row")?.dataset.workspace || "" : "",
+    });
     return true;
   }
 
@@ -245,52 +257,45 @@ async function renameSidebarSession(app: AppElement, row: Element | null): Promi
   await renameSessionById(app, sessionId);
 }
 
-async function deleteSidebarSession(app: AppElement, context: PluginContext, row: Element | null): Promise<void> {
+async function deleteSidebarSession(app: AppElement, context: PluginContext, row: Element | null): Promise<SidebarSession[]> {
   if (!row) {
-    return;
+    return [];
   }
 
   const htmlRow: HTMLElement = row as HTMLElement;
   const sessionId: string | undefined = htmlRow.dataset.session;
   if (!sessionId) {
-    return;
+    return [];
   }
 
   closeSessionMenus(app);
-  if (!confirm(`Delete session ${sessionId}? This removes the local JSONL file.`)) {
-    return;
+  if (!confirm(`Delete session ${sessionId}? This removes the local JSONL file and child sessions.`)) {
+    return [];
   }
 
   const workspaceId: string = htmlRow.dataset.workspace || "";
-  await deleteSessionById(app, sessionId);
-  dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, workspaceId });
+  const deletedSessions: SidebarSession[] = sessionTree(app, workspaceId, sessionId);
+  const deletedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
+  await deleteSessionList(app, context, workspaceId, deletedSessionIds);
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, sessionIds: deletedSessionIds, sessions: deletedSessions, workspaceId });
+  publishDeletedSessions(workspaceId, deletedSessions);
   await context.events?.publish("active-state", "active.end", {
     active: false,
     sessionId,
+    sessionIds: deletedSessionIds,
     source: "pi-web-sidebar",
     status: "idle",
     workspaceId,
   });
+  return deletedSessions;
 }
 
-async function createSidebarSession(
-  app: AppElement,
-  context: PluginContext,
-  workspaceId: string,
-  sessionId: string,
-): Promise<void> {
+function createSidebarSession(app: AppElement, workspaceId: string, sessionId: string): void {
   if (!workspaceId || !sessionId) {
     return;
   }
 
-  dispatchSidebarEvent(app, "pi-web-sidebar:session-created", { sessionId, status: "active", workspaceId });
-  await context.events?.publish("active-state", "active.start", {
-    active: true,
-    sessionId,
-    source: "pi-web-sidebar",
-    status: "active",
-    workspaceId,
-  });
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-created", { sessionId, status: "idle", workspaceId });
 }
 
 function nextWorkspaceSessionId(app: AppElement, workspaceId: string, existingSessionIds: Set<string>): string {
@@ -302,8 +307,57 @@ function nextWorkspaceSessionId(app: AppElement, workspaceId: string, existingSe
 }
 
 function workspaceSessionIds(app: AppElement, workspaceId: string): Set<string> {
+  return new Set(workspaceSessions(app, workspaceId).map((session: SidebarSession): string => session.id));
+}
+
+function workspaceSessions(app: AppElement, workspaceId: string): SidebarSession[] {
   const workspace = (app.workspaceList || []).find((item): boolean => item.id === workspaceId);
-  return new Set((workspace?.sessions || []).map((session): string => session.id));
+  return workspace?.sessions || [];
+}
+
+function sessionTree(app: AppElement, workspaceId: string, sessionId: string): SidebarSession[] {
+  const sessions: SidebarSession[] = workspaceSessions(app, workspaceId);
+  const byParentId: Map<string, SidebarSession[]> = new Map();
+
+  for (const session of sessions) {
+    if (!session.parentId) {
+      continue;
+    }
+
+    byParentId.set(session.parentId, [...byParentId.get(session.parentId) || [], session]);
+  }
+
+  const deletedSessions: SidebarSession[] = [];
+  const pendingIds: string[] = [sessionId];
+  const seenIds: Set<string> = new Set();
+
+  while (pendingIds.length > 0) {
+    const currentId: string = pendingIds.shift() || "";
+    if (!currentId || seenIds.has(currentId)) {
+      continue;
+    }
+
+    seenIds.add(currentId);
+    const session: SidebarSession | undefined = sessions.find((item: SidebarSession): boolean => item.id === currentId);
+    if (session) {
+      deletedSessions.push(session);
+    }
+
+    for (const child of byParentId.get(currentId) || []) {
+      pendingIds.push(child.id);
+    }
+  }
+
+  return deletedSessions.length > 0 ? deletedSessions : [{ id: sessionId }];
+}
+
+function publishDeletedSessions(workspaceId: string, sessions: SidebarSession[]): void {
+  const payload: Record<string, unknown> = {
+    sessionIds: sessions.map((session: SidebarSession): string => session.id),
+    sessions,
+    workspaceId,
+  };
+  globalThis.piWeb?.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").next(payload);
 }
 
 function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
