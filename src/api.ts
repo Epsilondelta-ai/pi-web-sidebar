@@ -1,9 +1,12 @@
+import { WORKSPACE_CACHE_KEY } from "./constants";
+import { readStoredValue, storeJson } from "./storage";
 import type { AppElement, FolderListing, PiStatus, PluginContext, SessionRenameResponse, SidebarWorkspace } from "./types";
 
 export async function loadWorkspaces(context: PluginContext, app: AppElement): Promise<SidebarWorkspace[]> {
   const directWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
 
   if (directWorkspaces.length > 0) {
+    storeWorkspaceCache(directWorkspaces);
     saveWorkspaceCacheInBackground(context, directWorkspaces);
     return directWorkspaces;
   }
@@ -12,6 +15,7 @@ export async function loadWorkspaces(context: PluginContext, app: AppElement): P
   const latestDirectWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
 
   if (latestDirectWorkspaces.length > 0) {
+    storeWorkspaceCache(latestDirectWorkspaces);
     saveWorkspaceCacheInBackground(context, latestDirectWorkspaces);
     return latestDirectWorkspaces;
   }
@@ -115,13 +119,39 @@ function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWo
 }
 
 async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorkspace[]> {
+  const localWorkspaces: SidebarWorkspace[] = readWorkspaceCache();
+
+  if (localWorkspaces.length > 0) {
+    return localWorkspaces;
+  }
+
   const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
 
   if (!isRecord(result) || !Array.isArray(result.workspaces)) {
     return [];
   }
 
-  return result.workspaces.filter(isSidebarWorkspace);
+  const backendWorkspaces: SidebarWorkspace[] = result.workspaces.filter(isSidebarWorkspace);
+  storeWorkspaceCache(backendWorkspaces);
+  return backendWorkspaces;
+}
+
+function readWorkspaceCache(): SidebarWorkspace[] {
+  const value: unknown = readStoredValue(WORKSPACE_CACHE_KEY);
+
+  if (!isRecord(value) || !Array.isArray(value.workspaces)) {
+    return [];
+  }
+
+  return value.workspaces.filter(isSidebarWorkspace);
+}
+
+function storeWorkspaceCache(workspaces: SidebarWorkspace[]): void {
+  if (workspaces.length === 0) {
+    return;
+  }
+
+  storeJson(WORKSPACE_CACHE_KEY, { workspaces });
 }
 
 function isSidebarWorkspace(value: unknown): value is SidebarWorkspace {

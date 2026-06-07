@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Window as HappyWindow } from "happy-dom";
 import { loadWorkspaces } from "./src/api";
+import { WORKSPACE_CACHE_KEY } from "./src/constants";
 import { createSidebarController } from "./src/index";
 import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, SubscriptionLike } from "./src/types";
 
@@ -527,7 +528,27 @@ describe("pi-web-sidebar plugin", () => {
     ]);
 
     expect(workspaces).toEqual(app.testWorkspaces);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("w1");
     saveDeferred.resolve({});
+  });
+
+  test("loadWorkspaces uses local workspace cache before backend cache latency", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [] }];
+    const backendDeferred = deferred<unknown>();
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
+      if (method === "load-workspace-cache") {
+        return backendDeferred.promise;
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+
+    expect(await loadWorkspaces(context, app)).toEqual(cachedWorkspaces);
+    backendDeferred.resolve({ workspaces: [] });
   });
 
   test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {
