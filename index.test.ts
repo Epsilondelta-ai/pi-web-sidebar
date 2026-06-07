@@ -711,14 +711,14 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("abcdefghijkl...");
   });
 
-  test("session rows use left indicators and unread is not green", async () => {
+  test("session rows use active or inactive left indicators without waiting text", async () => {
     const app = setupApp();
     app.testWorkspaces = [{
       id: "w1",
       name: "one",
       sessions: [
         { id: "live", title: "live", status: "running" },
-        { id: "unread", title: "unread", unread: true },
+        { id: "waiting", title: "waiting", kind: "waiting", status: "waiting", unread: true },
       ],
     }];
     const controller = createSidebarController(app, testContext(app));
@@ -726,9 +726,13 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
 
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
-    expect(app.querySelector("[data-session='unread'] .session-indicator.unread")).toBeTruthy();
-    expect(app.querySelector("[data-session='unread'] .session-indicator.live")).toBeFalsy();
-    expect(app.textContent?.includes("waiting")).toBe(false);
+    expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
+    expect(app.querySelector("[data-session='waiting'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='waiting'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-session='waiting'] .session-indicator.unread")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='waiting'] .session-indicator").title).toBe("session inactive");
+    expect(requireElement<HTMLElement>(app, "[data-session='waiting'] .meta").hidden).toBe(true);
   });
 
   test("chat input submitted marks sessions dirty and schedules refresh", async () => {

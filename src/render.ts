@@ -181,7 +181,7 @@ function createSessionMain(session: SidebarSession, workspaceId: string, titleTe
   main.dataset.title = titleText;
   dot.className = "dot session-indicator";
   dot.classList.toggle("live", sessionIsLive(session));
-  dot.classList.toggle("unread", !sessionIsLive(session) && sessionIsUnread(session));
+  dot.classList.toggle("idle", !sessionIsLive(session));
   dot.setAttribute("aria-label", sessionIndicatorLabel(session));
   dot.title = sessionIndicatorLabel(session);
   title.className = "title";
@@ -242,11 +242,7 @@ function createNewSessionRow(workspaceId: string): HTMLElement {
 function sessionBadges(session: SidebarSession): string[] {
   const badges: string[] = [];
 
-  if (sessionIsUnread(session)) {
-    badges.push("unread");
-  }
-
-  if (session.kind) {
+  if (session.kind && !isStatusLabel(session.kind)) {
     badges.push(session.kind);
   }
 
@@ -254,23 +250,15 @@ function sessionBadges(session: SidebarSession): string[] {
 }
 
 function sessionIndicatorLabel(session: SidebarSession): string {
-  if (sessionIsLive(session)) {
-    return "session live";
-  }
-
-  if (sessionIsUnread(session)) {
-    return "session unread";
-  }
-
-  return "session idle";
+  return sessionIsLive(session) ? "session active" : "session inactive";
 }
 
 function sessionIsLive(session: SidebarSession): boolean {
   return !!(session.live || session.active || ["running", "thinking", "active", "live"].includes(session.status || ""));
 }
 
-function sessionIsUnread(session: SidebarSession): boolean {
-  return !!(session.unreadCompleted || session.unread);
+function isStatusLabel(value: string): boolean {
+  return ["active", "idle", "live", "running", "thinking", "waiting"].includes(value.toLowerCase());
 }
 
 function normalizeSessionTitle(title: string): string {
