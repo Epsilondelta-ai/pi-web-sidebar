@@ -696,6 +696,52 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
   });
 
+  test("controller serializes backend cache saves so stale writes cannot finish last", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const firstSave = deferred<unknown>();
+    const staleWorkspaces: SidebarWorkspace[] = [{ id: "stale", name: "stale", path: "/stale", sessions: [] }];
+    const actualWorkspaces: SidebarWorkspace[] = [{ id: "actual", name: "actual", path: "/actual", sessions: [] }];
+    const saveCalls: SidebarWorkspace[][] = [];
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
+      if (method === "save-workspace-cache") {
+        saveCalls.push(options.data?.workspaces as SidebarWorkspace[]);
+        return saveCalls.length === 1 ? firstSave.promise : {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+    app.workspaceList = staleWorkspaces;
+    await globalThis.piWebSidebar!.refresh();
+    app.workspaceList = actualWorkspaces;
+    await globalThis.piWebSidebar!.refresh();
+
+    expect(saveCalls).toEqual([staleWorkspaces]);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("actual");
+    firstSave.resolve({});
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(saveCalls).toEqual([staleWorkspaces, actualWorkspaces]);
+    controller.dispose();
+  });
+
   test("controller ignores stale file cache localStorage from an older refresh", async () => {
     const app = setupApp();
     app.testWorkspaces = [];

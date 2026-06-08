@@ -38,6 +38,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let hostWorkspaceRecheckAttempts: number = 0;
   let channelSubscriptions: SubscriptionLike[] = [];
   let optimisticSessionsByWorkspace: Record<string, SidebarSession[]> = {};
+  let workspaceCacheSaveInFlight: boolean = false;
+  let queuedWorkspaceCacheSave: SidebarWorkspace[] | undefined;
   const clearedSessionWorkspaceIds: Set<string> = new Set();
   let workspaces: SidebarWorkspace[] = initialWorkspaceList();
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
@@ -423,9 +425,26 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
   function persistWorkspaceCache(nextWorkspaces: SidebarWorkspace[]): void {
     storeJson(WORKSPACE_CACHE_KEY, { workspaces: nextWorkspaces });
-    void saveWorkspaceCache(context, nextWorkspaces).catch((error: unknown): void => {
-      console.warn("pi-web-sidebar failed to persist workspace cache", error);
-    });
+    queuedWorkspaceCacheSave = nextWorkspaces;
+    flushWorkspaceCacheSave();
+  }
+
+  function flushWorkspaceCacheSave(): void {
+    if (workspaceCacheSaveInFlight || !queuedWorkspaceCacheSave) {
+      return;
+    }
+
+    const nextWorkspaces: SidebarWorkspace[] = queuedWorkspaceCacheSave;
+    queuedWorkspaceCacheSave = undefined;
+    workspaceCacheSaveInFlight = true;
+    void saveWorkspaceCache(context, nextWorkspaces)
+      .catch((error: unknown): void => {
+        console.warn("pi-web-sidebar failed to persist workspace cache", error);
+      })
+      .finally((): void => {
+        workspaceCacheSaveInFlight = false;
+        flushWorkspaceCacheSave();
+      });
   }
 
   function startDrag(item: DragItem): void {
