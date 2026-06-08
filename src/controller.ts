@@ -722,20 +722,37 @@ function removeWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: str
 function expandDeletedSessionIds(workspaces: SidebarWorkspace[], workspaceId: string, sessionIds: string[]): string[] {
   const deletedIds: string[] = [];
   const seenIds: Set<string> = new Set();
-  const scopedWorkspaces: SidebarWorkspace[] = workspaceId
-    ? workspaces.filter((workspace: SidebarWorkspace): boolean => workspace.id === workspaceId)
-    : workspaces;
+  const childIdsByParentId: Map<string, string[]> = childSessionIdsByParentId(workspaces, workspaceId);
 
   for (const sessionId of sessionIds) {
-    appendDeletedSessionId(sessionId, scopedWorkspaces, deletedIds, seenIds);
+    appendDeletedSessionId(sessionId, childIdsByParentId, deletedIds, seenIds);
   }
 
   return deletedIds;
 }
 
+function childSessionIdsByParentId(workspaces: SidebarWorkspace[], workspaceId: string): Map<string, string[]> {
+  const childIdsByParentId: Map<string, string[]> = new Map();
+  const scopedWorkspaces: SidebarWorkspace[] = workspaceId
+    ? workspaces.filter((workspace: SidebarWorkspace): boolean => workspace.id === workspaceId)
+    : workspaces;
+
+  for (const workspace of scopedWorkspaces) {
+    for (const session of workspace.sessions || []) {
+      if (session.parentId) {
+        const childIds: string[] = childIdsByParentId.get(session.parentId) || [];
+        childIds.push(session.id);
+        childIdsByParentId.set(session.parentId, childIds);
+      }
+    }
+  }
+
+  return childIdsByParentId;
+}
+
 function appendDeletedSessionId(
   sessionId: string,
-  workspaces: SidebarWorkspace[],
+  childIdsByParentId: Map<string, string[]>,
   deletedIds: string[],
   seenIds: Set<string>,
 ): void {
@@ -746,12 +763,8 @@ function appendDeletedSessionId(
   seenIds.add(sessionId);
   deletedIds.push(sessionId);
 
-  for (const workspace of workspaces) {
-    for (const session of workspace.sessions || []) {
-      if (session.parentId === sessionId) {
-        appendDeletedSessionId(session.id, workspaces, deletedIds, seenIds);
-      }
-    }
+  for (const childId of childIdsByParentId.get(sessionId) || []) {
+    appendDeletedSessionId(childId, childIdsByParentId, deletedIds, seenIds);
   }
 }
 
