@@ -153,12 +153,7 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
     sessions.append(createPluginSessionRow(item.session, workspace, app, item.depth));
   });
 
-  if (!workspace.sessions?.length) {
-    const empty: HTMLDivElement = document.createElement("div");
-    empty.className = "sessions-empty";
-    empty.textContent = "no sessions yet · press N to start one";
-    sessions.append(empty);
-  } else {
+  if (workspace.sessions?.length) {
     sessions.append(createDeleteWorkspaceSessionsRow(workspace.id));
   }
 

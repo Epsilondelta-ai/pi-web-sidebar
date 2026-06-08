@@ -423,14 +423,9 @@ function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
     return;
   }
 
-  sessions.querySelectorAll(".session-row[data-session], .clear-sessions-row").forEach((row: Element): void => row.remove());
-
-  if (!sessions.querySelector(".sessions-empty")) {
-    const empty: HTMLDivElement = document.createElement("div");
-    empty.className = "sessions-empty";
-    empty.textContent = "no sessions yet";
-    sessions.prepend(empty);
-  }
+  sessions
+    .querySelectorAll(":scope > .session-row[data-session], :scope > .clear-sessions-row")
+    .forEach((row: Element): void => row.remove());
 }
 
 function clearWorkspaceSessionSelection(app: AppElement, workspaceId: string): void {
