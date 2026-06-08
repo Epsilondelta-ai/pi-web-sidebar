@@ -299,25 +299,38 @@ func validateWorkspaceCache(cache request) request {
 		}
 
 		workspacePath := strings.TrimSpace(stringFromAny(workspace["path"]))
-		sessions, ok := workspace["sessions"].([]any)
-		if workspacePath == "" || !ok || len(sessions) == 0 {
+		if workspacePath == "" {
 			validated = append(validated, workspace)
 			continue
 		}
 
-		validSessionIDs := sessionIDsForWorkspacePath(workspacePath)
-		if validSessionIDs == nil {
+		validSessions := sessionRecordsForWorkspacePath(workspacePath)
+		if validSessions == nil {
 			validated = append(validated, workspace)
 			continue
 		}
 
-		filteredSessions := make([]any, 0, len(sessions))
+		sessions, _ := workspace["sessions"].([]any)
+		filteredSessions := make([]any, 0, len(sessions)+len(validSessions))
+		seenIDs := map[string]bool{}
 		for _, sessionItem := range sessions {
 			session, ok := sessionItem.(map[string]any)
 			if !ok {
 				continue
 			}
-			if validSessionIDs[stringFromAny(session["id"])] {
+
+			sessionID := stringFromAny(session["id"])
+			if validSessions[sessionID] == nil {
+				continue
+			}
+
+			filteredSessions = append(filteredSessions, session)
+			seenIDs[sessionID] = true
+		}
+
+		for _, session := range sortedSessionRecords(validSessions) {
+			sessionID := stringFromAny(session["id"])
+			if !seenIDs[sessionID] {
 				filteredSessions = append(filteredSessions, session)
 			}
 		}
@@ -332,7 +345,7 @@ func validateWorkspaceCache(cache request) request {
 	return cache
 }
 
-func sessionIDsForWorkspacePath(workspacePath string) map[string]bool {
+func sessionRecordsForWorkspacePath(workspacePath string) map[string]map[string]any {
 	cleanWorkspacePath, err := cleanPath(workspacePath)
 	if err != nil {
 		return nil
@@ -343,39 +356,58 @@ func sessionIDsForWorkspacePath(workspacePath string) map[string]bool {
 		return nil
 	}
 
-	ids := map[string]bool{}
+	sessions := map[string]map[string]any{}
 	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
 
-		id := sessionIDFromFile(path)
+		session := sessionRecordFromFile(path)
+		id := stringFromAny(session["id"])
 		if id != "" {
-			ids[id] = true
+			sessions[id] = session
 		}
 		return nil
 	}); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return ids
+			return sessions
 		}
 		return nil
 	}
-	return ids
+	return sessions
+}
+
+func sortedSessionRecords(sessions map[string]map[string]any) []map[string]any {
+	ids := make([]string, 0, len(sessions))
+	for id := range sessions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		records = append(records, sessions[id])
+	}
+	return records
 }
 
 func sessionIDFromFile(path string) string {
+	return stringFromAny(sessionRecordFromFile(path)["id"])
+}
+
+func sessionRecordFromFile(path string) map[string]any {
 	file, err := os.Open(path)
 	if err != nil {
-		return ""
+		return map[string]any{}
 	}
 	defer file.Close()
 
 	decoder := json.NewDecoder(file)
 	var header map[string]any
 	if err := decoder.Decode(&header); err != nil {
-		return ""
+		return map[string]any{}
 	}
-	return stringFromAny(header["id"])
+	return header
 }
 
 func workspaceHasLiveSession(sessions []any) bool {
@@ -397,7 +429,7 @@ func saveWorkspaceCache(data request) (request, error) {
 		return request{}, err
 	}
 
-	payload := request{"workspaces": data["workspaces"]}
+	payload := validateWorkspaceCache(request{"workspaces": data["workspaces"]})
 	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return request{}, err

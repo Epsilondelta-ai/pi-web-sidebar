@@ -200,11 +200,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
     };
     workspaces = upsertWorkspaceSession(workspaces, workspaceId, session);
-    app.dataset.activeSessionId = sessionId;
-    app.dataset.activeWorkspaceId = workspaceId;
     app.sidebarOpenWorkspaceId = workspaceId;
-    storePersistedSelection(sessionId, workspaceId);
-    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
     renderCurrentWorkspaces();
     sidebarBridge.emitEvent("session.created", { sessionId, workspaceId });
     sidebarBridge.emitState("session.created");

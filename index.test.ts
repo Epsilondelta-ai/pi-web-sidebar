@@ -908,6 +908,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(hostNewSessionClicks).toBe(0);
     expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
+    expect(app.querySelector("[data-session='s1'].active")).toBeFalsy();
+    expect(app.dataset.activeSessionId || "").toBe("");
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
@@ -976,7 +978,12 @@ describe("pi-web-sidebar plugin", () => {
   test("delete all sessions keeps sidebar shell", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [{ id: "s1", title: "new session" }, { id: "child", parentId: "s1", title: "child" }],
+    }];
     app.workspaceList = app.testWorkspaces;
     const deletedPayloads: Record<string, unknown>[] = [];
     const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
@@ -992,7 +999,12 @@ describe("pi-web-sidebar plugin", () => {
       app.testWorkspaces = [{ id: workspaceId, name: "one", path: "/one", sessions: [] }];
       app.workspaceList = app.testWorkspaces;
     };
-    const controller = createSidebarController(app, testContext(app));
+    const backendCalls: BackendCallLog[] = [];
+    const context = testContext(app, { backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+      backendCalls.push({ method, options });
+      return {};
+    } });
+    const controller = createSidebarController(app, context);
 
     controller.mount();
     expect(requireElement<HTMLElement>(app, ".clear-sessions-row").classList.contains("danger")).toBe(true);
@@ -1003,11 +1015,17 @@ describe("pi-web-sidebar plugin", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(hostDeleteAllCalls).toBe(1);
-    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1"]);
-    expect(sidebarEvents.find((event) => event.type === "delete-workspace-sessions")?.detail?.sessionIds).toEqual(["s1"]);
+    expect(backendCalls.some((call) => call.method === "delete-workspace-sessions" && call.options.data?.workspaceId === "w1")).toBe(true);
+    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "child"]);
+    expect(deletedPayloads.at(-1)?.sessions).toEqual([
+      { id: "s1", title: "new session" },
+      { id: "child", parentId: "s1", title: "child" },
+    ]);
+    expect(sidebarEvents.find((event) => event.type === "delete-workspace-sessions")?.detail?.sessionIds).toEqual(["s1", "child"]);
     expect(app.dataset.activeSessionId).toBe("");
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
+    expect(app.querySelector("[data-session='child']")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
 
