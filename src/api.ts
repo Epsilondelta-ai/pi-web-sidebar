@@ -31,12 +31,12 @@ export async function deleteWorkspaceById(app: AppElement, workspaceId?: string)
   await app.deleteWorkspace?.(workspaceId);
 }
 
-export async function createWorkspaceSession(app: AppElement, workspaceId?: string): Promise<void> {
+export async function createWorkspaceSession(app: AppElement, workspaceId?: string): Promise<string> {
   if (!workspaceId) {
-    return;
+    return "";
   }
 
-  await app.newSession?.(workspaceId);
+  return sessionIdFromResponse(await app.newSession?.(workspaceId));
 }
 
 export async function deleteWorkspaceSessionList(
@@ -76,6 +76,41 @@ export async function deleteSessionById(app: AppElement, sessionId: string): Pro
 
 export async function openWorkspacePath(app: AppElement, path: string): Promise<void> {
   await app.openWorkspacePath?.(path);
+}
+
+function sessionIdFromResponse(response: unknown): string {
+  if (typeof response === "string") {
+    return response;
+  }
+
+  if (!response || typeof response !== "object") {
+    return "";
+  }
+
+  const record: Record<string, unknown> = response as Record<string, unknown>;
+  const session: unknown = record.session;
+
+  if (typeof record.id === "string") {
+    return record.id;
+  }
+
+  if (typeof record.sessionId === "string") {
+    return record.sessionId;
+  }
+
+  if (session && typeof session === "object") {
+    const sessionRecord: Record<string, unknown> = session as Record<string, unknown>;
+
+    if (typeof sessionRecord.id === "string") {
+      return sessionRecord.id;
+    }
+
+    if (typeof sessionRecord.sessionId === "string") {
+      return sessionRecord.sessionId;
+    }
+  }
+
+  return "";
 }
 
 export async function loadFolders(context: PluginContext, path: string): Promise<FolderListing> {

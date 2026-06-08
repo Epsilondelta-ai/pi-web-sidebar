@@ -912,6 +912,27 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
+  test("new session without a host id does not fabricate optimistic sessions", async () => {
+    const app = setupApp();
+    const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    app.newSession = async (): Promise<unknown> => undefined;
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event").subscribe((event) => {
+      sidebarEvents.push(event);
+    });
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    requireElement(app, "[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(0);
+    expect(app.dataset.activeSessionId || "").toBe("");
+    expect(sidebarEvents.some((event) => event.type === "session.created")).toBe(false);
+    expect(sidebarEvents.some((event) => event.type === "new-session")).toBe(true);
+  });
+
   test("uses cached workspaces when direct pi state is empty", async () => {
     const app = setupApp();
     app.testWorkspaces = [];

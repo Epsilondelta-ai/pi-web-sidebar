@@ -118,9 +118,9 @@ async function handleMutatingWorkspaceAction(
   if (action === "new-session") {
     const workspaceId: string = target.dataset.workspace || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup || "";
     const existingSessionIds: Set<string> = workspaceSessionIds(app, workspaceId);
-    await createWorkspaceSession(app, workspaceId);
-    createSidebarSession(app, workspaceId, nextWorkspaceSessionId(app, workspaceId, existingSessionIds));
+    const createdSessionId: string = await createWorkspaceSession(app, workspaceId);
     await refreshWorkspaces();
+    createSidebarSession(app, workspaceId, createdSessionId || createdWorkspaceSessionId(app, workspaceId, existingSessionIds));
     sidebarBridge.emitEvent("new-session", { workspaceId });
     return true;
   }
@@ -298,12 +298,10 @@ function createSidebarSession(app: AppElement, workspaceId: string, sessionId: s
   dispatchSidebarEvent(app, "pi-web-sidebar:session-created", { sessionId, status: "idle", workspaceId });
 }
 
-function nextWorkspaceSessionId(app: AppElement, workspaceId: string, existingSessionIds: Set<string>): string {
-  const newSession: string | undefined = [...workspaceSessionIds(app, workspaceId)].find((sessionId): boolean => {
+function createdWorkspaceSessionId(app: AppElement, workspaceId: string, existingSessionIds: Set<string>): string {
+  return [...workspaceSessionIds(app, workspaceId)].find((sessionId: string): boolean => {
     return !existingSessionIds.has(sessionId);
-  });
-
-  return newSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`;
+  }) || "";
 }
 
 function workspaceSessionIds(app: AppElement, workspaceId: string): Set<string> {
