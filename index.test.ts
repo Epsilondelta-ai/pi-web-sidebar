@@ -1085,17 +1085,20 @@ describe("pi-web-sidebar plugin", () => {
   });
 
   test("session rows render subagent and team agent tree badges", async () => {
-    const app = setupApp();
+    const app: TestApp = setupApp();
     app.testWorkspaces = [{
       id: "w1",
       name: "one",
       sessions: [
         { id: "parent", name: "parent" },
-        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
-        { id: "team", parentId: "parent", name: "team worker", kind: "team agent" },
+        { id: "sub", parentId: "parent", name: "subagent-Beatrice", kind: "subagent" },
+        { id: "team", parentId: "parent", name: "pi agent teams - teammate Emilia", kind: "team agent" },
       ],
     }];
-    const controller = createSidebarController(app, testContext(app));
+    const controller: ReturnType<typeof createSidebarController> = createSidebarController(
+      app,
+      testContext(app),
+    );
 
     controller.mount();
     await Promise.resolve();
@@ -1104,8 +1107,34 @@ describe("pi-web-sidebar plugin", () => {
     expect(rows.map((row: HTMLElement): string => row.dataset.session || "")).toEqual(["parent", "sub", "team"]);
     expect(requireElement<HTMLElement>(app, "[data-session='sub']").dataset.depth).toBe("1");
     expect(requireElement<HTMLElement>(app, "[data-session='team']").dataset.depth).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='sub'] .title").textContent).toBe("Beatrice");
     expect(requireElement<HTMLElement>(app, "[data-session='sub'] .meta").textContent).toBe("subagent");
+    expect(requireElement<HTMLElement>(app, "[data-session='team'] .title").textContent).toBe("Emilia");
     expect(requireElement<HTMLElement>(app, "[data-session='team'] .meta").textContent).toBe("team agent");
+  });
+
+  test("orphan agent sessions keep child indentation while parent sessions stay flush", async () => {
+    const app: TestApp = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "missing-parent", name: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "missing-team", name: "team worker", kind: "team agent" },
+      ],
+    }];
+    const controller: ReturnType<typeof createSidebarController> = createSidebarController(
+      app,
+      testContext(app),
+    );
+
+    controller.mount();
+    await Promise.resolve();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.depth).toBe("0");
+    expect(requireElement<HTMLElement>(app, "[data-session='sub']").dataset.depth).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='team']").dataset.depth).toBe("1");
   });
 
   test("external parent session deletion removes descendant rows", async () => {
