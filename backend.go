@@ -619,7 +619,6 @@ func expandSessionDeleteSet(sessionDir string, sessionIDs []string) map[string]b
 }
 
 func removeSessionFiles(sessionDir string, deleteSet map[string]bool) ([]string, error) {
-	deleted := []string{}
 	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
@@ -633,13 +632,50 @@ func removeSessionFiles(sessionDir string, deleteSet map[string]bool) ([]string,
 		if err := os.Remove(path); err != nil {
 			return err
 		}
-		deleted = append(deleted, id)
 		return nil
 	}); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 
-	return deleted, nil
+	if err := removeSyntheticSessionDirs(sessionDir, deleteSet); err != nil {
+		return nil, err
+	}
+
+	return sortedDeletedSessionIDs(deleteSet), nil
+}
+
+func removeSyntheticSessionDirs(sessionDir string, deleteSet map[string]bool) error {
+	entries, err := os.ReadDir(sessionDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		id := sessionIDFromSessionFileName(entry.Name())
+		if id == "" || !deleteSet[id] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(sessionDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sortedDeletedSessionIDs(deleteSet map[string]bool) []string {
+	ids := make([]string, 0, len(deleteSet))
+	for id := range deleteSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func sessionRecordsForSessionDir(sessionDir string) []map[string]any {

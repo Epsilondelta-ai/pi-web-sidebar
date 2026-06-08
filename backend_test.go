@@ -482,11 +482,11 @@ func TestDeleteSessionsRemovesDiscoveredNestedChildSessionFiles(t *testing.T) {
 		t.Fatalf("deleteSessions error = %v", err)
 	}
 	deleted := result["deleted"].([]string)
-	if len(deleted) != 1 || deleted[0] != "child" {
-		t.Fatalf("deleted = %v, want child", deleted)
+	if len(deleted) != 2 || deleted[0] != "child" || deleted[1] != "parent" {
+		t.Fatalf("deleted = %v, want child parent", deleted)
 	}
-	if _, err := os.Stat(childFile); !os.IsNotExist(err) {
-		t.Fatalf("child file still exists or unexpected error: %v", err)
+	if _, err := os.Stat(parentDir); !os.IsNotExist(err) {
+		t.Fatalf("parent dir still exists or unexpected error: %v", err)
 	}
 	if _, err := os.Stat(keepFile); err != nil {
 		t.Fatalf("keep file missing: %v", err)
