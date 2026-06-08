@@ -115,6 +115,44 @@ func TestLoadWorkspaceCachePrunesMissingSessions(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceCacheUsesProjectSessionDirSetting(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspace, ".pi", "sessions"), 0o755); err != nil {
+		t.Fatalf("create project sessions: %v", err)
+	}
+	settings := []byte(`{"sessionDir":".pi/sessions"}`)
+	if err := os.WriteFile(filepath.Join(workspace, ".pi", "settings.json"), settings, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	projectSession := []byte(`{"id":"project-session","title":"project chat"}` + "\n")
+	if err := os.WriteFile(filepath.Join(workspace, ".pi", "sessions", "project.jsonl"), projectSession, 0o600); err != nil {
+		t.Fatalf("write project session: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	result, err := loadWorkspaceCache()
+	if err != nil {
+		t.Fatalf("loadWorkspaceCache error = %v", err)
+	}
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	sessions := workspaceCache["sessions"].([]any)
+	if len(sessions) != 1 {
+		t.Fatalf("sessions length = %d, want 1", len(sessions))
+	}
+	if sessions[0].(map[string]any)["id"] != "project-session" {
+		t.Fatalf("session id = %v, want project-session", sessions[0].(map[string]any)["id"])
+	}
+}
+
 func TestLoadWorkspaceCacheAddsUncachedExistingSessions(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")

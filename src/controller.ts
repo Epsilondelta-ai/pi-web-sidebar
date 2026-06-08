@@ -371,11 +371,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       const refreshedWorkspaces: SidebarWorkspace[] = options.emptySessionsForWorkspaceId
         ? withoutWorkspaceSessions(nextWorkspaces, app, options.emptySessionsForWorkspaceId)
         : nextWorkspaces;
-      workspaces = clearWorkspaceSessionsById(
-        mergeOptimisticSessions(refreshedWorkspaces, optimisticSessionsByWorkspace),
-        clearedSessionWorkspaceIds,
-        app,
-      );
+      optimisticSessionsByWorkspace = removeMissingOptimisticSessions(optimisticSessionsByWorkspace, refreshedWorkspaces);
+      workspaces = clearWorkspaceSessionsById(refreshedWorkspaces, clearedSessionWorkspaceIds, app);
       if (clearedSessionWorkspaceIds.size > 0) {
         persistWorkspaceCache(workspaces);
       }
@@ -686,6 +683,30 @@ function mergeOptimisticSessions(
     const sessions: SidebarSession[] = [...missingSessions, ...(workspace.sessions || [])];
     return { ...workspace, live: workspaceHasLiveSession(sessions), sessionCount: sessions.length, sessions };
   });
+}
+
+function removeMissingOptimisticSessions(
+  optimisticSessionsByWorkspace: Record<string, SidebarSession[]>,
+  workspaces: SidebarWorkspace[],
+): Record<string, SidebarSession[]> {
+  const existingSessionIds: Set<string> = new Set(
+    workspaces.flatMap((workspace: SidebarWorkspace): string[] => {
+      return (workspace.sessions || []).map((session: SidebarSession): string => session.id);
+    }),
+  );
+  const next: Record<string, SidebarSession[]> = {};
+
+  for (const [workspaceId, sessions] of Object.entries(optimisticSessionsByWorkspace)) {
+    const remainingSessions: SidebarSession[] = sessions.filter((session: SidebarSession): boolean => {
+      return existingSessionIds.has(session.id);
+    });
+
+    if (remainingSessions.length > 0) {
+      next[workspaceId] = remainingSessions;
+    }
+  }
+
+  return next;
 }
 
 function removeOptimisticSession(

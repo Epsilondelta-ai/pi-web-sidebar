@@ -140,6 +140,14 @@ async function handleMutatingWorkspaceAction(
       sessions: publishedSessions,
       workspaceId: workspaceId || "",
     });
+    await context.events?.publish("active-state", "active.end", {
+      active: false,
+      sessionId: deletedSessionIds[0] || "",
+      sessionIds: deletedSessionIds,
+      source: "pi-web-sidebar",
+      status: "idle",
+      workspaceId: workspaceId || "",
+    });
     await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
     return true;
   }

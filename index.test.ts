@@ -1080,6 +1080,41 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='s2']")).toBeTruthy();
   });
 
+  test("delete all sessions publishes active end for every requested id when backend deleted list is empty", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "optimistic", title: "New chat" }] }];
+    app.workspaceList = app.testWorkspaces;
+    const activeEndPayloads: Record<string, unknown>[] = [];
+    const context = testContext(app, {
+      backend: async (method: string): Promise<unknown> => {
+        if (method === "delete-workspace-sessions") {
+          return { deleted: [] };
+        }
+
+        return {};
+      },
+      events: {
+        publish: async (_channel: string, type: string, payload: unknown): Promise<unknown> => {
+          if (type === "active.end") {
+            activeEndPayloads.push(payload as Record<string, unknown>);
+          }
+
+          return {};
+        },
+        subscribe: (): (() => void) => (): void => {},
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-action='delete-workspace-sessions']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(activeEndPayloads.at(-1)?.sessionIds).toEqual(["optimistic"]);
+  });
+
   test("delete all sessions publishes backend-expanded deleted ids", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];

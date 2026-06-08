@@ -47,7 +47,8 @@ export async function deleteWorkspaceSessionList(
 
   const result: unknown = await context.backend?.("delete-workspace-sessions", { data: { sessionIds, workspaceId } });
   if (isRecord(result) && Array.isArray(result.deleted)) {
-    return result.deleted.filter((sessionId: unknown): sessionId is string => typeof sessionId === "string");
+    const deletedSessionIds: string[] = result.deleted.filter((sessionId: unknown): sessionId is string => typeof sessionId === "string");
+    return deletedSessionIds.length > 0 ? deletedSessionIds : sessionIds;
   }
 
   await app.deleteWorkspaceSessions?.(workspaceId);
@@ -61,9 +62,10 @@ export async function deleteSessionList(
   sessionIds: string[],
 ): Promise<string[]> {
   const result: unknown = await context.backend?.("delete-sessions", { data: { sessionIds, workspaceId } });
-  const deletedSessionIds: string[] = isRecord(result) && Array.isArray(result.deleted)
+  const backendDeletedSessionIds: string[] = isRecord(result) && Array.isArray(result.deleted)
     ? result.deleted.filter((sessionId: unknown): sessionId is string => typeof sessionId === "string")
-    : sessionIds;
+    : [];
+  const deletedSessionIds: string[] = backendDeletedSessionIds.length > 0 ? backendDeletedSessionIds : sessionIds;
 
   for (const sessionId of deletedSessionIds) {
     await app.deleteSession?.(sessionId);

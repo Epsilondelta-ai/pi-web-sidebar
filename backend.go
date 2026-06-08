@@ -612,13 +612,57 @@ func stringFromAny(value any) string {
 }
 
 func piSessionDirForCWD(cwd string) string {
+	if root := os.Getenv("PI_CODING_AGENT_SESSION_DIR"); root != "" {
+		return cwdScopedSessionDir(root, cwd)
+	}
+
+	if sessionDir := projectSessionDir(cwd); sessionDir != "" {
+		return sessionDir
+	}
+
 	root := defaultPiSessionDir()
 	if root == "" {
 		return ""
 	}
 
+	return cwdScopedSessionDir(root, cwd)
+}
+
+func cwdScopedSessionDir(root string, cwd string) string {
 	safePath := "--" + strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(strings.TrimLeft(cwd, "/\\")) + "--"
 	return filepath.Join(root, safePath)
+}
+
+func projectSessionDir(cwd string) string {
+	settingsPath := filepath.Join(cwd, ".pi", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return ""
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return ""
+	}
+
+	sessionDir := strings.TrimSpace(stringFromAny(settings["sessionDir"]))
+	if sessionDir == "" {
+		return ""
+	}
+	if sessionDir == "~" || strings.HasPrefix(sessionDir, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		if sessionDir == "~" {
+			return filepath.Clean(home)
+		}
+		return filepath.Clean(filepath.Join(home, strings.TrimPrefix(sessionDir, "~/")))
+	}
+	if filepath.IsAbs(sessionDir) {
+		return filepath.Clean(sessionDir)
+	}
+	return filepath.Clean(filepath.Join(cwd, sessionDir))
 }
 
 func defaultPiSessionDir() string {
