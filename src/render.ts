@@ -150,14 +150,14 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
 
 function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorkspace, app: AppElement, depth: number): HTMLElement {
   const selected: boolean = session.id === app.dataset.activeSessionId;
-  const titleText: string = sessionDisplayTitle(session);
+  const nameText: string = sessionDisplayName(session);
   const row: HTMLDivElement = document.createElement("div");
   row.className = ["session-row", selected && "active", selected && "selected", session.parentId && "child-session"]
     .filter(Boolean)
     .join(" ");
   row.dataset.session = session.id;
   row.dataset.workspace = workspace.id;
-  row.dataset.title = titleText;
+  row.dataset.title = nameText;
   row.dataset.lastUsed = session.lastUsed || "";
   row.dataset.depth = String(depth);
   row.style.setProperty("--pi-web-sidebar-session-depth", String(depth));
@@ -167,31 +167,31 @@ function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorks
   }
 
   row.setAttribute("aria-current", selected ? "true" : "false");
-  row.append(createSessionMain(session, workspace.id, titleText), createSessionMenuButton(session), createSessionMenu(session));
+  row.append(createSessionMain(session, workspace.id, nameText), createSessionMenuButton(session), createSessionMenu(session));
   return row;
 }
 
-function createSessionMain(session: SidebarSession, workspaceId: string, titleText: string): HTMLElement {
+function createSessionMain(session: SidebarSession, workspaceId: string, nameText: string): HTMLElement {
   const main: HTMLButtonElement = document.createElement("button");
   const dot: HTMLSpanElement = document.createElement("span");
-  const title: HTMLSpanElement = document.createElement("span");
+  const label: HTMLSpanElement = document.createElement("span");
   const meta: HTMLSpanElement = document.createElement("span");
   main.type = "button";
   main.className = "session-main";
   main.dataset.session = session.id;
   main.dataset.workspace = workspaceId;
-  main.dataset.title = titleText;
+  main.dataset.title = nameText;
   dot.className = "dot session-indicator";
   dot.classList.toggle("live", sessionIsLive(session));
   dot.classList.toggle("idle", !sessionIsLive(session));
   dot.setAttribute("aria-label", sessionIndicatorLabel(session));
   dot.title = sessionIndicatorLabel(session);
-  title.className = "title";
-  title.textContent = titleText;
+  label.className = "title";
+  label.textContent = nameText;
   meta.className = "meta";
   meta.textContent = sessionBadges(session).join(" · ");
   meta.hidden = !meta.textContent;
-  main.append(dot, title, meta);
+  main.append(dot, label, meta);
   return main;
 }
 
@@ -277,18 +277,18 @@ function isStatusLabel(value: string): boolean {
     .includes(label);
 }
 
-function sessionDisplayTitle(session: SidebarSession): string {
-  const title: string = session.title || session.name || "";
+function sessionDisplayName(session: SidebarSession): string {
+  const name: string = session.name || "";
 
-  if (title && !isStatusLabel(title)) {
-    return normalizeSessionTitle(title);
+  if (name && !isStatusLabel(name)) {
+    return normalizeSessionName(name);
   }
 
-  return normalizeSessionTitle(session.id);
+  return normalizeSessionName(session.id);
 }
 
-function normalizeSessionTitle(title: string): string {
-  return title.length > 12 ? `${title.slice(0, 12)}...` : title;
+function normalizeSessionName(name: string): string {
+  return name.length > 12 ? `${name.slice(0, 12)}...` : name;
 }
 
 function workspaceSessionCount(workspace: SidebarWorkspace): number {

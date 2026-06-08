@@ -283,7 +283,25 @@ func loadWorkspaceCache() (request, error) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return request{}, err
 	}
-	return validateWorkspaceCache(result), nil
+
+	validated := validateWorkspaceCache(result)
+	if err := writeWorkspaceCacheIfChanged(path, data, validated); err != nil {
+		return request{}, err
+	}
+	return validated, nil
+}
+
+func writeWorkspaceCacheIfChanged(path string, previous []byte, cache request) error {
+	encoded, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+
+	if string(encoded) == string(previous) {
+		return nil
+	}
+	return os.WriteFile(path, encoded, 0o600)
 }
 
 func validateWorkspaceCache(cache request) request {
@@ -322,11 +340,12 @@ func validateWorkspaceCache(cache request) request {
 			}
 
 			sessionID := stringFromAny(session["id"])
-			if validSessions[sessionID] == nil {
+			validSession := validSessions[sessionID]
+			if validSession == nil {
 				continue
 			}
 
-			filteredSessions = append(filteredSessions, session)
+			filteredSessions = append(filteredSessions, mergeCachedSessionRecord(session, validSession))
 			seenIDs[sessionID] = true
 		}
 
@@ -394,7 +413,7 @@ func syntheticParentSessions(sessionDir string) map[string]map[string]any {
 
 		id := sessionIDFromSessionFileName(entry.Name())
 		if id != "" {
-			sessions[id] = map[string]any{"id": id, "title": id}
+			sessions[id] = map[string]any{"id": id, "name": id}
 		}
 	}
 	return sessions
@@ -445,7 +464,16 @@ func sessionRecordFromFile(path string) map[string]any {
 		}
 	}
 	mergeSessionName(header, firstChatName)
+	normalizeSessionRecord(header)
 	return header
+}
+
+func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[string]any {
+	if strings.TrimSpace(stringFromAny(cached["name"])) == "" {
+		cached["name"] = sessionName(valid)
+	}
+	normalizeSessionRecord(cached)
+	return cached
 }
 
 func mergeSessionInfo(session map[string]any, info map[string]any) {
@@ -453,12 +481,21 @@ func mergeSessionInfo(session map[string]any, info map[string]any) {
 }
 
 func mergeSessionName(session map[string]any, name string) {
-	if name != "" && strings.TrimSpace(stringFromAny(session["title"])) == "" {
-		session["title"] = name
-	}
 	if name != "" && strings.TrimSpace(stringFromAny(session["name"])) == "" {
 		session["name"] = name
 	}
+}
+
+func normalizeSessionRecord(session map[string]any) {
+	mergeSessionName(session, sessionName(session))
+	delete(session, "title")
+}
+
+func sessionName(session map[string]any) string {
+	if name := strings.TrimSpace(stringFromAny(session["name"])); name != "" {
+		return name
+	}
+	return strings.TrimSpace(stringFromAny(session["title"]))
 }
 
 func firstUserChatText(event map[string]any) string {
@@ -523,8 +560,7 @@ func sessionKind(session map[string]any, path string) string {
 	text := strings.ToLower(strings.Join([]string{
 		path,
 		stringFromAny(session["kind"]),
-		stringFromAny(session["title"]),
-		stringFromAny(session["name"]),
+		sessionName(session),
 		stringFromAny(session["agent"]),
 		stringFromAny(session["agentName"]),
 		stringFromAny(session["teammate"]),

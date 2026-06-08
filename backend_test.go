@@ -157,8 +157,11 @@ func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
 	if childSession == nil {
 		t.Fatalf("sessions = %v, want child", sessions)
 	}
-	if childSession["parentId"] != parentID || childSession["kind"] != "subagent" || childSession["title"] != "subagent-reviewer-abcd1234-1" {
+	if childSession["parentId"] != parentID || childSession["kind"] != "subagent" || childSession["name"] != "subagent-reviewer-abcd1234-1" {
 		t.Fatalf("childSession = %v, want decorated subagent child", childSession)
+	}
+	if _, ok := childSession["title"]; ok {
+		t.Fatalf("childSession = %v, want no legacy title", childSession)
 	}
 }
 
@@ -241,8 +244,11 @@ func TestLoadWorkspaceCacheAddsUncachedExistingSessions(t *testing.T) {
 		t.Fatalf("sessions length = %d, want 1", len(sessions))
 	}
 	session := sessions[0].(map[string]any)
-	if session["id"] != "external" || session["title"] != "external chat" || session["parentId"] != "parent" {
+	if session["id"] != "external" || session["name"] != "external chat" || session["parentId"] != "parent" {
 		t.Fatalf("session = %v, want external metadata", session)
+	}
+	if _, ok := session["title"]; ok {
+		t.Fatalf("session = %v, want no legacy title", session)
 	}
 	if workspaceCache["sessionCount"] != 1 {
 		t.Fatalf("sessionCount = %v, want 1", workspaceCache["sessionCount"])
@@ -289,8 +295,67 @@ func TestLoadWorkspaceCacheNamesUncachedSessionFromFirstChat(t *testing.T) {
 	}
 	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
 	session := sessions[0].(map[string]any)
-	if session["title"] != "첫 채팅 제목" || session["name"] != "첫 채팅 제목" {
-		t.Fatalf("session = %v, want first chat title/name", session)
+	if session["name"] != "첫 채팅 제목" {
+		t.Fatalf("session = %v, want first chat name", session)
+	}
+	if _, ok := session["title"]; ok {
+		t.Fatalf("session = %v, want no legacy title", session)
+	}
+}
+
+func TestLoadWorkspaceCacheUpdatesCachedSessionMissingName(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	sessionData := []byte(
+		`{"id":"cached"}` + "\n" +
+			`{"type":"message","message":{"role":"user","content":"캐시 보정"}}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "cached.jsonl"), sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[{"id":"cached","active":true}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := loadWorkspaceCache()
+	if err != nil {
+		t.Fatalf("loadWorkspaceCache error = %v", err)
+	}
+	session := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)[0].(map[string]any)
+	if session["name"] != "캐시 보정" || session["active"] != true {
+		t.Fatalf("session = %v, want cached session updated with disk name", session)
+	}
+	if _, ok := session["title"]; ok {
+		t.Fatalf("session = %v, want no legacy title", session)
+	}
+
+	data, err := os.ReadFile(filepath.Join(cacheDir, "workspaces.json"))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"name": "캐시 보정"`) || strings.Contains(text, `"title"`) {
+		t.Fatalf("cache = %s, want updated name without title", text)
 	}
 }
 
