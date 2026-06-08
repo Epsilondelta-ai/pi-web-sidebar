@@ -1619,6 +1619,51 @@ describe("pi-web-sidebar plugin", () => {
     expect(JSON.parse(localStorage.getItem("pi.sessionOrder") || "{}")).toEqual({ w1: ["parent", "team", "sub", "other"] });
   });
 
+  test("fallback drag moves a parent session with its child agent sessions", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "parent", name: "team worker", kind: "team agent" },
+        { id: "other", name: "other parent" },
+      ],
+    }];
+    app.sidebarOpenWorkspaceId = "w1";
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    const pluginSidebar = requireElement(app, "[data-pi-web-sidebar-plugin]");
+    const parentHandle = requireElement(app, "[data-session='parent'] .session-drag-handle");
+    const otherRow = requireElement<HTMLElement>(app, "[data-session='other']");
+    otherRow.getBoundingClientRect = (): DOMRect => ({
+      bottom: 0,
+      height: 10,
+      left: 0,
+      right: 0,
+      top: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: (): Record<string, number> => ({}),
+    });
+
+    parentHandle.dispatchEvent(dragEvent("dragstart"));
+    otherRow.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
+    pluginSidebar.dispatchEvent(dragEvent("drop"));
+
+    const sessionOrderAfterParentDrag: string[] = [...app.querySelectorAll<HTMLElement>(
+      "[data-workspace-group='w1'] .session-row[data-session]",
+    )].map((row: HTMLElement): string => row.dataset.session || "");
+    expect(sessionOrderAfterParentDrag).toEqual(["other", "parent", "sub", "team"]);
+    expect(JSON.parse(localStorage.getItem("pi.sessionOrder") || "{}")).toEqual({
+      w1: ["other", "parent", "sub", "team"],
+    });
+  });
+
   test("plugin open button uses backend folder browser and opens selected workspace path", async () => {
     const app = setupApp();
     const context = testContext(app, { backendCalls: [], backend: async (method, options) => {

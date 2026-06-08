@@ -513,26 +513,45 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     clearDragState();
   }
 
-  function insertNear(source: HTMLElement | null, target: Element | null, event: DragEvent): boolean {
+  function insertNear(
+    source: HTMLElement | null,
+    target: Element | null,
+    event: DragEvent,
+    movedNodes: HTMLElement[] = [],
+    targetNodes: HTMLElement[] = [],
+  ): boolean {
     if (!source || !target || source === target || !target.parentElement || !wrap) {
       return false;
     }
 
     const htmlTarget: HTMLElement = target as HTMLElement;
+    const nodesToMove: HTMLElement[] = movedNodes.length > 0 ? movedNodes : [source];
+    const nodesAroundTarget: HTMLElement[] = targetNodes.length > 0 ? targetNodes : [htmlTarget];
+    if (nodesToMove.includes(htmlTarget)) {
+      return false;
+    }
+
     const rect: DOMRect | undefined = htmlTarget.getBoundingClientRect?.();
     const after: boolean = rect && Number.isFinite(rect.top) ? event.clientY > rect.top + rect.height / 2 : false;
-    const anchor: ChildNode | null = after ? htmlTarget.nextSibling : htmlTarget;
+    const targetTail: HTMLElement = nodesAroundTarget[nodesAroundTarget.length - 1] || htmlTarget;
+    const anchor: ChildNode | null = after ? targetTail.nextSibling : htmlTarget;
 
-    if (anchor === source) {
+    if (anchor === source || nodesToMove.includes(anchor as HTMLElement)) {
       return false;
     }
 
     const siblings: HTMLElement[] = movableSiblings(source);
     const before: Map<HTMLElement, number> = measureTops(siblings);
+    const fragment: DocumentFragment = document.createDocumentFragment();
     wrap.querySelectorAll(".pi-web-sidebar-drop-target").forEach((node: Element): void => {
       node.classList.remove("pi-web-sidebar-drop-target");
     });
-    htmlTarget.parentElement?.insertBefore(source, anchor);
+
+    for (const node of nodesToMove) {
+      fragment.append(node);
+    }
+
+    htmlTarget.parentElement?.insertBefore(fragment, anchor);
     htmlTarget.classList.add("pi-web-sidebar-drop-target");
     animateMovedSiblings(siblings, before);
     return true;
@@ -550,7 +569,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
-    if (insertNear(source, target, event)) {
+    if (insertNear(source, target, event, sessionMoveRows(source), sessionMoveRows(target as HTMLElement))) {
       persistSessionOrder(source.dataset.workspace);
       sidebarBridge.emitEvent("session-order-preview", {
         workspaceId: source.dataset.workspace,
@@ -558,6 +577,33 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       });
     }
   }
+
+  function sessionMoveRows(row: HTMLElement): HTMLElement[] {
+    const workspaceId: string = row.dataset.workspace || "";
+    const sessionId: string = row.dataset.session || "";
+    if (!workspaceId || !sessionId || !wrap) {
+      return [row];
+    }
+
+    const group: HTMLElement | null = wrap.querySelector(`.workspace-group[data-workspace-group='${cssEscape(workspaceId)}']`);
+    const rows: HTMLElement[] = [...group?.querySelectorAll<HTMLElement>(".session-row[data-session]") || []];
+    return rows.filter((candidate: HTMLElement): boolean => candidate === row || isDescendantSessionRow(candidate, sessionId, rows));
+  }
+
+  function isDescendantSessionRow(candidate: HTMLElement, parentSessionId: string, rows: HTMLElement[]): boolean {
+    let parentId: string = candidate.dataset.parentSession || "";
+
+    while (parentId) {
+      if (parentId === parentSessionId) {
+        return true;
+      }
+
+      parentId = rows.find((row: HTMLElement): boolean => row.dataset.session === parentId)?.dataset.parentSession || "";
+    }
+
+    return false;
+  }
+
   function currentWorkspaceOrder(): string[] {
     return [...wrap?.querySelectorAll<HTMLElement>(".workspace-group[data-workspace-group]") || []]
       .map((group: HTMLElement): string => group.dataset.workspaceGroup || "")
