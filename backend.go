@@ -69,6 +69,8 @@ func main() {
 		result, err = deleteWorkspaceSessions(stringInput(data, "workspaceId"), stringListInput(data, "sessionIds"))
 	case "delete-sessions":
 		result, err = deleteSessions(stringInput(data, "workspaceId"), stringListInput(data, "sessionIds"))
+	case "create-session":
+		result, err = createSession(stringInput(data, "workspaceId"))
 	case "pi-status":
 		result, err = checkPiStatus()
 	default:
@@ -601,6 +603,40 @@ func saveWorkspaceCache(data request) (request, error) {
 		return request{}, err
 	}
 	return request{"path": path}, nil
+}
+
+func createSession(workspaceID string) (request, error) {
+	workspacePath, err := workspacePathFromCache(workspaceID)
+	if err != nil {
+		return request{}, err
+	}
+
+	sessionDir := piSessionDirForCWD(workspacePath)
+	if sessionDir == "" {
+		return request{}, errors.New("session dir is empty")
+	}
+
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return request{}, err
+	}
+
+	sessionID := newSessionID()
+	sessionPath := filepath.Join(sessionDir, sessionID+".jsonl")
+	header := request{"id": sessionID, "name": "New chat", "timestamp": time.Now().Format(time.RFC3339Nano), "type": "session"}
+	payload, err := json.Marshal(header)
+	if err != nil {
+		return request{}, err
+	}
+
+	if err := os.WriteFile(sessionPath, append(payload, '\n'), 0o600); err != nil {
+		return request{}, err
+	}
+
+	return request{"session": header, "sessionId": sessionID, "path": sessionPath, "workspaceId": workspaceID}, nil
+}
+
+func newSessionID() string {
+	return fmt.Sprintf("sidebar-%d", time.Now().UnixNano())
 }
 
 func deleteSessions(workspaceID string, sessionIDs []string) (request, error) {

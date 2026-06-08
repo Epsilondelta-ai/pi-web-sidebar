@@ -120,7 +120,7 @@ async function handleMutatingWorkspaceAction(
       || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup
       || "";
     const existingSessionIds: Set<string> = workspaceSessionIds(app, workspaceId);
-    const createdSessionId: string = await createWorkspaceSession(app, workspaceId);
+    const createdSessionId: string = await createWorkspaceSession(context, app, workspaceId);
     const detectedSessionId: string = createdSessionId || createdWorkspaceSessionId(app, workspaceId, existingSessionIds);
     const sessionId: string = detectedSessionId || optimisticWorkspaceSessionId();
     await refreshWorkspaces();
