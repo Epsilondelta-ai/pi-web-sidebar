@@ -413,10 +413,6 @@ function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
     return workspace.id === workspaceId ? { ...workspace, sessions: [], sessionCount: 0, live: false } : workspace;
   });
 
-  app.querySelectorAll(`[data-workspace='${escapedWorkspaceId}'][data-session]`).forEach((node: Element): void => {
-    node.remove();
-  });
-
   const group: HTMLElement | null = app.querySelector(`[data-workspace-group='${escapedWorkspaceId}']`);
   const sessions: HTMLElement | null = group?.querySelector(".sessions") || null;
   if (!sessions) {
