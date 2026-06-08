@@ -194,7 +194,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     clearedSessionWorkspaceIds.delete(workspaceId);
-    const session: SidebarSession = { id: sessionId, title: "New chat", active: false, status: "idle" };
+    const session: SidebarSession = { id: sessionId, name: "New chat", active: false, status: "idle" };
     optimisticSessionsByWorkspace = {
       ...optimisticSessionsByWorkspace,
       [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
@@ -212,7 +212,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     clearedSessionWorkspaceIds.delete(workspaceId);
-    const session: SidebarSession = { id: sessionId, title: "New chat", active: true, status };
+    const session: SidebarSession = { id: sessionId, name: "New chat", active: true, status };
     optimisticSessionsByWorkspace = {
       ...optimisticSessionsByWorkspace,
       [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
@@ -281,13 +281,13 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
   function applySessionChange(change: Record<string, unknown>): void {
     const sessionId: string = stringValue(change.sessionId) || stringValue(change.id);
-    const title: string = stringValue(change.title) || stringValue(change.name);
+    const name: string = stringValue(change.name) || stringValue(change.title);
 
-    if (!sessionId || !title) {
+    if (!sessionId || !name) {
       return;
     }
 
-    workspaces = renameWorkspaceSession(workspaces, sessionId, title);
+    workspaces = renameWorkspaceSession(workspaces, sessionId, name);
     renderCurrentWorkspaces();
   }
 
@@ -624,17 +624,17 @@ function withoutWorkspaceSessions(
   return nextWorkspaces;
 }
 
-function renameWorkspaceSession(workspaces: SidebarWorkspace[], sessionId: string, title: string): SidebarWorkspace[] {
+function renameWorkspaceSession(workspaces: SidebarWorkspace[], sessionId: string, name: string): SidebarWorkspace[] {
   return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => ({
     ...workspace,
     sessions: (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
-      return session.id === sessionId ? { ...session, title: normalizeSessionTitle(title), name: normalizeSessionTitle(title) } : session;
+      return session.id === sessionId ? { ...session, name: normalizeSessionName(name) } : session;
     }),
   }));
 }
 
-function normalizeSessionTitle(title: string): string {
-  return title.length > 12 ? `${title.slice(0, 12)}...` : title;
+function normalizeSessionName(name: string): string {
+  return name.length > 12 ? `${name.slice(0, 12)}...` : name;
 }
 
 function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: string): string {
@@ -747,7 +747,7 @@ function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
 function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
   return workspaces.map((workspace: SidebarWorkspace): string => {
     const sessions: string = (workspace.sessions || []).map((session: SidebarSession): string => {
-      return [session.id, session.title || "", session.name || "", session.status || "", session.kind || ""].join("/");
+      return [session.id, session.name || "", session.status || "", session.kind || ""].join("/");
     }).join(",");
 
     return [workspace.id, workspace.name || "", workspace.path || "", workspace.sessionCount || 0, sessions].join(":");

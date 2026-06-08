@@ -283,7 +283,25 @@ func loadWorkspaceCache() (request, error) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return request{}, err
 	}
-	return validateWorkspaceCache(result), nil
+
+	validated := validateWorkspaceCache(result)
+	if err := writeWorkspaceCacheIfChanged(path, data, validated); err != nil {
+		return request{}, err
+	}
+	return validated, nil
+}
+
+func writeWorkspaceCacheIfChanged(path string, previous []byte, cache request) error {
+	encoded, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+
+	if string(encoded) == string(previous) {
+		return nil
+	}
+	return os.WriteFile(path, encoded, 0o600)
 }
 
 func validateWorkspaceCache(cache request) request {
@@ -322,11 +340,12 @@ func validateWorkspaceCache(cache request) request {
 			}
 
 			sessionID := stringFromAny(session["id"])
-			if validSessions[sessionID] == nil {
+			validSession := validSessions[sessionID]
+			if validSession == nil {
 				continue
 			}
 
-			filteredSessions = append(filteredSessions, session)
+			filteredSessions = append(filteredSessions, mergeCachedSessionRecord(session, validSession))
 			seenIDs[sessionID] = true
 		}
 
@@ -394,7 +413,7 @@ func syntheticParentSessions(sessionDir string) map[string]map[string]any {
 
 		id := sessionIDFromSessionFileName(entry.Name())
 		if id != "" {
-			sessions[id] = map[string]any{"id": id, "title": id}
+			sessions[id] = map[string]any{"id": id, "name": id}
 		}
 	}
 	return sessions
@@ -431,6 +450,7 @@ func sessionRecordFromFile(path string) map[string]any {
 		return map[string]any{}
 	}
 
+	firstChatName := ""
 	for i := 0; i < 12; i++ {
 		var event map[string]any
 		if err := decoder.Decode(&event); err != nil {
@@ -439,18 +459,74 @@ func sessionRecordFromFile(path string) map[string]any {
 		if event["type"] == "session_info" {
 			mergeSessionInfo(header, event)
 		}
+		if firstChatName == "" {
+			firstChatName = firstUserChatText(event)
+		}
 	}
+	mergeSessionName(header, firstChatName)
+	normalizeSessionRecord(header)
 	return header
 }
 
-func mergeSessionInfo(session map[string]any, info map[string]any) {
-	name := strings.TrimSpace(stringFromAny(info["name"]))
-	if name != "" && strings.TrimSpace(stringFromAny(session["title"])) == "" {
-		session["title"] = name
+func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[string]any {
+	if strings.TrimSpace(stringFromAny(cached["name"])) == "" {
+		cached["name"] = sessionName(valid)
 	}
+	normalizeSessionRecord(cached)
+	return cached
+}
+
+func mergeSessionInfo(session map[string]any, info map[string]any) {
+	mergeSessionName(session, strings.TrimSpace(stringFromAny(info["name"])))
+}
+
+func mergeSessionName(session map[string]any, name string) {
 	if name != "" && strings.TrimSpace(stringFromAny(session["name"])) == "" {
 		session["name"] = name
 	}
+}
+
+func normalizeSessionRecord(session map[string]any) {
+	mergeSessionName(session, sessionName(session))
+	delete(session, "title")
+}
+
+func sessionName(session map[string]any) string {
+	if name := strings.TrimSpace(stringFromAny(session["name"])); name != "" {
+		return name
+	}
+	return strings.TrimSpace(stringFromAny(session["title"]))
+}
+
+func firstUserChatText(event map[string]any) string {
+	message, ok := event["message"].(map[string]any)
+	if !ok || stringFromAny(message["role"]) != "user" {
+		return ""
+	}
+	return firstTextContent(message["content"])
+}
+
+func firstTextContent(content any) string {
+	if text := strings.TrimSpace(stringFromAny(content)); text != "" {
+		return text
+	}
+
+	items, ok := content.([]any)
+	if !ok {
+		return ""
+	}
+
+	for _, item := range items {
+		part, ok := item.(map[string]any)
+		if !ok || stringFromAny(part["type"]) != "text" {
+			continue
+		}
+
+		if text := strings.TrimSpace(stringFromAny(part["text"])); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func decorateSessionRecord(session map[string]any, path string, sessionDir string) {
@@ -484,8 +560,7 @@ func sessionKind(session map[string]any, path string) string {
 	text := strings.ToLower(strings.Join([]string{
 		path,
 		stringFromAny(session["kind"]),
-		stringFromAny(session["title"]),
-		stringFromAny(session["name"]),
+		sessionName(session),
 		stringFromAny(session["agent"]),
 		stringFromAny(session["agentName"]),
 		stringFromAny(session["teammate"]),

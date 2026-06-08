@@ -658,7 +658,7 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
-    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "loaded" }] }];
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "loaded" }] }];
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
 
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("loaded");
@@ -672,7 +672,7 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
-    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "late session" }] }];
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "late session" }] }];
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
 
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("late session");
@@ -705,7 +705,7 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 220); });
-    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "direct" }] }];
+    app.workspaceList = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "direct" }] }];
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 140); });
 
     expect(app.querySelector("[data-workspace-group='cached']")).toBeFalsy();
@@ -713,9 +713,29 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
   });
 
+  test("migrates cached legacy session title to name and updates localStorage", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({
+      workspaces: [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "legacy title" }] }],
+    }));
+    const controller = createSidebarController(app, testContext(app, { initialWorkspaces: [], backend: undefined }));
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    const cached: unknown = JSON.parse(localStorage.getItem(WORKSPACE_CACHE_KEY) || "{}");
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("legacy title");
+    expect(cached).toEqual({
+      workspaces: [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "legacy title" }] }],
+    });
+    controller.dispose();
+  });
+
   test("exposes RxJS sidebar state and events for other plugins", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "one" }] }];
     const controller = createSidebarController(app, testContext(app));
     const states: import("./src/types").SidebarSnapshot[] = [];
     const events: import("./src/types").SidebarActionEvent[] = [];
@@ -791,7 +811,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("persists selected session and publishes selectedSession over RxJS", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "one" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "one" }] }];
     const controller = createSidebarController(app, testContext(app));
     const selected: import("./src/types").SelectedSession[] = [];
     const events: import("./src/types").SidebarActionEvent[] = [];
@@ -819,12 +839,12 @@ describe("pi-web-sidebar plugin", () => {
   test("piWeb channels reconcile active id and first-message title updates", async () => {
     installTestPiWeb();
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "placeholder" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "placeholder" }] }];
     const controller = createSidebarController(app, testContext(app));
     controller.mount();
     await Promise.resolve();
     globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next("s1");
-    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", title: "abcdefghijklmnop" });
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", name: "abcdefghijklmnop" });
 
     expect(localStorage.getItem("plugin.pi-web-sidebar.activeSessionId")).toBe("s1");
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("abcdefghijkl...");
@@ -834,8 +854,8 @@ describe("pi-web-sidebar plugin", () => {
     const app = setupApp();
     app.dataset.activeWorkspaceId = "w1";
     app.testWorkspaces = [
-      { id: "w1", name: "one", sessions: [{ id: "s1", title: "running", status: "running" }] },
-      { id: "w2", name: "two", live: false, sessions: [{ id: "s2", title: "running", status: "running" }] },
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "running", status: "running" }] },
+      { id: "w2", name: "two", live: false, sessions: [{ id: "s2", name: "running", status: "running" }] },
     ];
     const controller = createSidebarController(app, testContext(app));
     controller.mount();
@@ -851,9 +871,9 @@ describe("pi-web-sidebar plugin", () => {
       id: "w1",
       name: "one",
       sessions: [
-        { id: "parent", title: "parent" },
-        { id: "sub", parentId: "parent", title: "sub worker", kind: "subagent" },
-        { id: "team", parentId: "parent", title: "team worker", kind: "team agent" },
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "parent", name: "team worker", kind: "team agent" },
       ],
     }];
     const controller = createSidebarController(app, testContext(app));
@@ -875,10 +895,10 @@ describe("pi-web-sidebar plugin", () => {
       id: "w1",
       name: "one",
       sessions: [
-        { id: "live", title: "live", status: "running" },
-        { id: "active-waiting", title: "real chat", active: true, kind: " waiting " },
-        { id: "completed", title: "completed", active: true, unreadCompleted: true },
-        { id: "waiting", title: "waiting", kind: " waiting ", status: "waiting", unread: true },
+        { id: "live", name: "live", status: "running" },
+        { id: "active-waiting", name: "real chat", active: true, kind: " waiting " },
+        { id: "completed", name: "completed", active: true, unreadCompleted: true },
+        { id: "waiting", name: "waiting", kind: " waiting ", status: "waiting", unread: true },
       ],
     }];
     const controller = createSidebarController(app, testContext(app));
@@ -906,11 +926,11 @@ describe("pi-web-sidebar plugin", () => {
   test("chat input submitted marks sessions dirty and schedules refresh", async () => {
     installTestPiWeb();
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "old" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "old" }] }];
     const controller = createSidebarController(app, testContext(app));
     controller.mount();
     await Promise.resolve();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new title" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "new title" }] }];
     globalThis.piWeb?.subject("chat.input.submitted").next({ text: "hello", attachments: [] });
     await new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -919,7 +939,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("adds fallback grip handles to plugin-rendered rows", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", title: "one" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "one" }] }];
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
@@ -947,7 +967,7 @@ describe("pi-web-sidebar plugin", () => {
     let hostNewSessionCalls = 0;
     app.newSession = async (workspaceId: string): Promise<void> => {
       hostNewSessionCalls += 1;
-      app.testWorkspaces = [{ id: workspaceId, name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+      app.testWorkspaces = [{ id: workspaceId, name: "one", path: "/one", sessions: [{ id: "s1", name: "new session" }] }];
       app.workspaceList = app.testWorkspaces;
     };
     app.addEventListener("click", (event) => {
@@ -998,7 +1018,7 @@ describe("pi-web-sidebar plugin", () => {
     const app = setupApp();
     app.testWorkspaces = [];
     app.workspaceList = [];
-    const cached: SidebarWorkspace[] = [{ id: "cached", name: "cached", path: "/cached", sessions: [{ id: "s1", title: "saved" }] }];
+    const cached: SidebarWorkspace[] = [{ id: "cached", name: "cached", path: "/cached", sessions: [{ id: "s1", name: "saved" }] }];
     const context = testContext(app, {
       backend: async (method: string): Promise<unknown> => method === "load-workspace-cache" ? { workspaces: cached } : {},
     });
@@ -1016,7 +1036,7 @@ describe("pi-web-sidebar plugin", () => {
   test("session menu delete keeps the current workspace list when pi state is unchanged", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "new session" }] }];
     app.workspaceList = app.testWorkspaces;
     app.deleteSession = async (): Promise<void> => {};
     const controller = createSidebarController(app, testContext(app));
@@ -1041,7 +1061,7 @@ describe("pi-web-sidebar plugin", () => {
       id: "w1",
       name: "one",
       path: "/one",
-      sessions: [{ id: "s1", title: "new session" }, { id: "child", parentId: "s1", title: "child" }],
+      sessions: [{ id: "s1", name: "new session" }, { id: "child", parentId: "s1", name: "child" }],
     }];
     app.workspaceList = app.testWorkspaces;
     const deletedPayloads: Record<string, unknown>[] = [];
@@ -1084,8 +1104,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(backendDeletedSessions).toBe(true);
     expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "child"]);
     expect(deletedPayloads.at(-1)?.sessions).toEqual([
-      { id: "s1", title: "new session" },
-      { id: "child", parentId: "s1", title: "child" },
+      { id: "s1", name: "new session" },
+      { id: "child", parentId: "s1", name: "child" },
     ]);
     const clearEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
       (event: import("./src/types").SidebarActionEvent): boolean => event.type === "delete-workspace-sessions",
@@ -1100,14 +1120,14 @@ describe("pi-web-sidebar plugin", () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", title: "future" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", name: "future" }] }];
     await controller.refresh();
     expect(app.querySelector("[data-session='s2']")).toBeTruthy();
   });
 
   test("delete all sessions publishes active end for every requested id when backend deleted list is empty", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "optimistic", title: "New chat" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "optimistic", name: "New chat" }] }];
     app.workspaceList = app.testWorkspaces;
     const activeEndPayloads: Record<string, unknown>[] = [];
     const context = testContext(app, {
@@ -1142,7 +1162,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("delete all sessions publishes backend-expanded deleted ids", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "new session" }] }];
     app.workspaceList = app.testWorkspaces;
     const deletedPayloads: Record<string, unknown>[] = [];
     globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
@@ -1166,7 +1186,7 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
 
     expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "hidden-child"]);
-    expect(deletedPayloads.at(-1)?.sessions).toEqual([{ id: "s1", title: "new session" }, { id: "hidden-child" }]);
+    expect(deletedPayloads.at(-1)?.sessions).toEqual([{ id: "s1", name: "new session" }, { id: "hidden-child" }]);
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {
@@ -1176,7 +1196,7 @@ describe("pi-web-sidebar plugin", () => {
       id: "w1",
       name: "one",
       path: "/one",
-      sessions: [{ id: "s1", title: "new session" }, { id: "child", parentId: "s1", title: "child" }],
+      sessions: [{ id: "s1", name: "new session" }, { id: "child", parentId: "s1", name: "child" }],
     }];
     app.workspaceList = app.testWorkspaces;
     const deletedSessionIds: string[] = [];
@@ -1213,7 +1233,7 @@ describe("pi-web-sidebar plugin", () => {
   test("fallback drag previews workspace and session moves before drop", async () => {
     const app = setupApp();
     app.testWorkspaces = [
-      { id: "w1", name: "one", sessions: [{ id: "s1", title: "one" }, { id: "s2", title: "two" }] },
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "one" }, { id: "s2", name: "two" }] },
       { id: "w2", name: "two", sessions: [] },
     ];
     app.sidebarOpenWorkspaceId = "w1";

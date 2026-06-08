@@ -11,7 +11,6 @@ export type SidebarActionEvent = {
 
 export type SidebarSession = {
   id: string;
-  title?: string;
   name?: string;
   parentId?: string;
   lastUsed?: string;
@@ -159,5 +158,5 @@ export type FolderListing = {
 };
 
 export type SessionRenameResponse = {
-  session?: { title?: string };
+  session?: { name?: string };
 };

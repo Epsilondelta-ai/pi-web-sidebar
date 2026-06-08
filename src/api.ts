@@ -1,16 +1,16 @@
 import { WORKSPACE_CACHE_KEY } from "./constants";
 import { readStoredValue, storeJson } from "./storage";
-import type { AppElement, FolderListing, PiStatus, PluginContext, SessionRenameResponse, SidebarWorkspace } from "./types";
+import type { AppElement, FolderListing, PiStatus, PluginContext, SessionRenameResponse, SidebarSession, SidebarWorkspace } from "./types";
 
 export async function loadWorkspaces(context: PluginContext, app: AppElement): Promise<SidebarWorkspace[]> {
-  const directWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
+  const directWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(directWorkspaceList(context, app));
 
   if (directWorkspaces.length > 0) {
     return validateAndStoreWorkspaces(context, directWorkspaces);
   }
 
   const cachedWorkspaces: SidebarWorkspace[] = await loadWorkspaceCache(context);
-  const latestDirectWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
+  const latestDirectWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(directWorkspaceList(context, app));
 
   if (latestDirectWorkspaces.length > 0) {
     return validateAndStoreWorkspaces(context, latestDirectWorkspaces);
@@ -167,7 +167,7 @@ export async function saveWorkspaceCache(context: PluginContext, workspaces: Sid
 }
 
 async function validateAndStoreWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
-  const validatedWorkspaces: SidebarWorkspace[] = await validateWorkspaces(context, workspaces);
+  const validatedWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(await validateWorkspaces(context, workspaces));
   storeWorkspaceCache(validatedWorkspaces);
   saveWorkspaceCacheInBackground(context, validatedWorkspaces);
   return validatedWorkspaces;
@@ -205,12 +205,14 @@ async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorksp
   const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
 
   if (isRecord(result) && Array.isArray(result.workspaces)) {
-    const backendWorkspaces: SidebarWorkspace[] = result.workspaces.filter(isSidebarWorkspace);
+    const backendWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(result.workspaces.filter(isSidebarWorkspace));
     storeWorkspaceCache(backendWorkspaces);
     return backendWorkspaces;
   }
 
-  return readWorkspaceCache();
+  const cachedWorkspaces: SidebarWorkspace[] = readWorkspaceCache();
+  storeWorkspaceCache(cachedWorkspaces);
+  return cachedWorkspaces;
 }
 
 function readWorkspaceCache(): SidebarWorkspace[] {
@@ -220,7 +222,28 @@ function readWorkspaceCache(): SidebarWorkspace[] {
     return [];
   }
 
-  return value.workspaces.filter(isSidebarWorkspace);
+  return normalizeSidebarWorkspaces(value.workspaces.filter(isSidebarWorkspace));
+}
+
+function normalizeSidebarWorkspaces(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    if (!workspace.sessions) {
+      return workspace;
+    }
+
+    return { ...workspace, sessions: workspace.sessions.map(normalizeSidebarSession) };
+  });
+}
+
+function normalizeSidebarSession(session: SidebarSession): SidebarSession {
+  const normalized: Record<string, unknown> = { ...session };
+  const legacyTitle: unknown = normalized["title"];
+  delete normalized["title"];
+
+  if (!session.name && typeof legacyTitle === "string" && legacyTitle.trim()) {
+    normalized.name = legacyTitle.trim();
+  }
+  return normalized as SidebarSession;
 }
 
 function storeWorkspaceCache(workspaces: SidebarWorkspace[]): void {
