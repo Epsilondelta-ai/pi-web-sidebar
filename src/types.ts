@@ -77,10 +77,23 @@ export type PiWebRegistry = {
 
 export type BackendCall = (method: string, input: { workspaceId?: string; data?: Record<string, unknown> }) => Promise<unknown>;
 
+export type PluginEvent = {
+  id?: number;
+  type: string;
+  payload?: unknown;
+  at?: string;
+};
+
+export type PluginEvents = {
+  publish(channel: string, type: string, payload?: unknown): Promise<unknown>;
+  subscribe(channel: string, eventTypes: string[], callback: (event: PluginEvent) => void): () => void;
+};
+
 export type PluginContext = {
   app?: AppElement;
   initialWorkspaces?: SidebarWorkspace[];
   backend?: BackendCall;
+  events?: PluginEvents;
 };
 
 export type AppElement = HTMLElement & {
@@ -94,7 +107,7 @@ export type AppElement = HTMLElement & {
   openWorkspacePath?: (path: string) => Promise<void>;
   deleteWorkspace?: (workspaceId: string) => Promise<void>;
   deleteWorkspaceSessions?: (workspaceId: string) => Promise<void>;
-  newSession?: (workspaceId: string) => Promise<void>;
+  newSession?: (workspaceId: string) => Promise<unknown>;
   renameSession?: (sessionId: string) => Promise<void>;
   deleteSession?: (sessionId: string) => Promise<void>;
 };

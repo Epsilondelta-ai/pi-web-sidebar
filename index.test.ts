@@ -532,23 +532,23 @@ describe("pi-web-sidebar plugin", () => {
     saveDeferred.resolve({});
   });
 
-  test("loadWorkspaces uses local workspace cache before backend cache latency", async () => {
+  test("loadWorkspaces uses backend-validated cache before local stale cache", async () => {
     const app = setupApp();
     app.testWorkspaces = [];
     app.workspaceList = [];
-    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [] }];
-    const backendDeferred = deferred<unknown>();
+    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [{ id: "stale" }] }];
+    const backendWorkspaces: SidebarWorkspace[] = [{ id: "backend", name: "backend", path: "/backend", sessions: [] }];
     const context = testContext(app, { initialWorkspaces: [], backend: async (method) => {
       if (method === "load-workspace-cache") {
-        return backendDeferred.promise;
+        return { workspaces: backendWorkspaces };
       }
 
       throw new Error(`unexpected backend call: ${method}`);
     } });
     localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
 
-    expect(await loadWorkspaces(context, app)).toEqual(cachedWorkspaces);
-    backendDeferred.resolve({ workspaces: [] });
+    expect(await loadWorkspaces(context, app)).toEqual(backendWorkspaces);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("backend");
   });
 
   test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {
@@ -879,6 +879,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(sidebarStyle).toContain(".session-row[data-session] .session-main");
     expect(sidebarStyle).toContain("text-overflow: ellipsis");
     expect(sidebarStyle).toContain("padding-left: 12px");
+    expect(sidebarStyle).toContain(".clear-sessions-row");
   });
 
   test("new session click is handled once and renders session actions without full refresh", async () => {
@@ -907,6 +908,29 @@ describe("pi-web-sidebar plugin", () => {
     expect(hostNewSessionClicks).toBe(0);
     expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
+  });
+
+  test("new session without a host id does not fabricate optimistic sessions", async () => {
+    const app = setupApp();
+    const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    app.newSession = async (): Promise<unknown> => undefined;
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event").subscribe((event) => {
+      sidebarEvents.push(event);
+    });
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    requireElement(app, "[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(0);
+    expect(app.dataset.activeSessionId || "").toBe("");
+    expect(sidebarEvents.some((event) => event.type === "session.created")).toBe(false);
+    expect(sidebarEvents.some((event) => event.type === "new-session")).toBe(true);
   });
 
   test("uses cached workspaces when direct pi state is empty", async () => {
@@ -954,6 +978,14 @@ describe("pi-web-sidebar plugin", () => {
     app.dataset.activeSessionId = "s1";
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
     app.workspaceList = app.testWorkspaces;
+    const deletedPayloads: Record<string, unknown>[] = [];
+    const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+      deletedPayloads.push(payload);
+    });
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event").subscribe((event) => {
+      sidebarEvents.push(event);
+    });
     let hostDeleteAllCalls = 0;
     app.deleteWorkspaceSessions = async (workspaceId: string): Promise<void> => {
       hostDeleteAllCalls += 1;
@@ -963,27 +995,46 @@ describe("pi-web-sidebar plugin", () => {
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
+    expect(requireElement<HTMLElement>(app, ".clear-sessions-row").classList.contains("danger")).toBe(true);
     requireElement(app, "[data-action='delete-workspace-sessions']")
       .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     await Promise.resolve();
     await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(hostDeleteAllCalls).toBe(1);
+    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1"]);
+    expect(sidebarEvents.find((event) => event.type === "delete-workspace-sessions")?.detail?.sessionIds).toEqual(["s1"]);
     expect(app.dataset.activeSessionId).toBe("");
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
+
+    await Promise.resolve();
+    await Promise.resolve();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", title: "future" }] }];
+    await controller.refresh();
+    expect(app.querySelector("[data-session='s2']")).toBeTruthy();
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [{ id: "s1", title: "new session" }, { id: "child", parentId: "s1", title: "child" }],
+    }];
     app.workspaceList = app.testWorkspaces;
-    let hostDeleteClicks = 0;
-    app.deleteSession = async (): Promise<void> => {
-      hostDeleteClicks += 1;
+    const deletedSessionIds: string[] = [];
+    const deletedPayloads: Record<string, unknown>[] = [];
+    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+      deletedPayloads.push(payload);
+    });
+    app.deleteSession = async (sessionId: string): Promise<void> => {
+      deletedSessionIds.push(sessionId);
       app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
       app.workspaceList = app.testWorkspaces;
     };
@@ -999,10 +1050,12 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(hostDeleteClicks).toBe(1);
+    expect(deletedSessionIds).toEqual(["s1", "child"]);
+    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "child"]);
     expect(app.dataset.activeSessionId).toBe("");
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
+    expect(app.querySelector("[data-session='child']")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
   });
 

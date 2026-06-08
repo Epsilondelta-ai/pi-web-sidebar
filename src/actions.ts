@@ -1,6 +1,6 @@
 import {
   createWorkspaceSession,
-  deleteSessionById,
+  deleteSessionList,
   deleteWorkspaceById,
   deleteWorkspaceSessionList,
   renameSessionById,
@@ -8,7 +8,7 @@ import {
 import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
 import { collapseSidebarLayout, routeWorkspace } from "./layout";
 import { markSelectedSession } from "./render";
-import type { AppElement, PluginContext, SidebarBridge, SidebarWorkspace } from "./types";
+import type { AppElement, PluginContext, SidebarBridge, SidebarSession, SidebarWorkspace } from "./types";
 
 type RefreshWorkspaces = (options?: { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string }) => Promise<SidebarWorkspace[]>;
 
@@ -116,17 +116,30 @@ async function handleMutatingWorkspaceAction(
   }
 
   if (action === "new-session") {
-    await createWorkspaceSession(app, target.dataset.workspace);
+    const workspaceId: string = target.dataset.workspace || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup || "";
+    const existingSessionIds: Set<string> = workspaceSessionIds(app, workspaceId);
+    const createdSessionId: string = await createWorkspaceSession(app, workspaceId);
     await refreshWorkspaces();
-    sidebarBridge.emitEvent("new-session", { workspaceId: target.dataset.workspace || "" });
+    createSidebarSession(app, workspaceId, createdSessionId || createdWorkspaceSessionId(app, workspaceId, existingSessionIds));
+    sidebarBridge.emitEvent("new-session", { workspaceId });
     return true;
   }
 
   if (action === "delete-workspace-sessions") {
     const workspaceId: string | undefined = target.dataset.workspace;
-    await deleteWorkspaceSessionList(app, workspaceId);
+    const deletedSessions: SidebarSession[] = workspaceSessions(app, workspaceId || "");
+    const deletedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
+    clearWorkspaceSessionSelection(app, workspaceId || "");
+    clearWorkspaceSessionDom(app, workspaceId || "");
+    await deleteWorkspaceSessionList(app, context, workspaceId);
+    dispatchSidebarEvent(app, "pi-web-sidebar:workspace-sessions-cleared", { sessionIds: deletedSessionIds, workspaceId: workspaceId || "" });
+    publishDeletedSessions(workspaceId || "", deletedSessions);
+    sidebarBridge.emitEvent("delete-workspace-sessions", {
+      sessionIds: deletedSessionIds,
+      sessions: deletedSessions,
+      workspaceId: workspaceId || "",
+    });
     await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
-    sidebarBridge.emitEvent("delete-workspace-sessions", { workspaceId: workspaceId || "" });
     return true;
   }
 
@@ -176,15 +189,22 @@ async function handleSessionAction(
   }
 
   if (action === "delete-session") {
-    await deleteSidebarSession(app, target.closest(".session-row"));
+    const deletedSessions: SidebarSession[] = await deleteSidebarSession(app, context, target.closest(".session-row"));
     await refreshWorkspaces();
-    sidebarBridge.emitEvent("delete-session", { sessionId: target.closest<HTMLElement>(".session-row")?.dataset.session || "" });
+    sidebarBridge.emitEvent("delete-session", {
+      sessionId: deletedSessions[0]?.id || "",
+      sessionIds: deletedSessions.map((session: SidebarSession): string => session.id),
+      sessions: deletedSessions,
+      workspaceId: deletedSessions[0] ? target.closest<HTMLElement>(".session-row")?.dataset.workspace || "" : "",
+    });
     return true;
   }
 
   if (action === "select-session") {
     markSelectedSession(target, app);
-    persistSelectedSession(target);
+    markSelectedWorkspace(target, app);
+    persistSelectedSession(target, app);
+    publishSelectedSession(target);
     routeWorkspace(app);
     const detail: Record<string, unknown> = {
       sessionId: target.dataset.session || "",
@@ -237,33 +257,186 @@ async function renameSidebarSession(app: AppElement, row: Element | null): Promi
   await renameSessionById(app, sessionId);
 }
 
-async function deleteSidebarSession(app: AppElement, row: Element | null): Promise<void> {
+async function deleteSidebarSession(app: AppElement, context: PluginContext, row: Element | null): Promise<SidebarSession[]> {
   if (!row) {
-    return;
+    return [];
   }
 
   const htmlRow: HTMLElement = row as HTMLElement;
   const sessionId: string | undefined = htmlRow.dataset.session;
   if (!sessionId) {
-    return;
+    return [];
   }
 
   closeSessionMenus(app);
-  if (!confirm(`Delete session ${sessionId}? This removes the local JSONL file.`)) {
+  if (!confirm(`Delete session ${sessionId}? This removes the local JSONL file and child sessions.`)) {
+    return [];
+  }
+
+  const workspaceId: string = htmlRow.dataset.workspace || "";
+  const deletedSessions: SidebarSession[] = sessionTree(app, workspaceId, sessionId);
+  const deletedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
+  await deleteSessionList(app, context, workspaceId, deletedSessionIds);
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, sessionIds: deletedSessionIds, sessions: deletedSessions, workspaceId });
+  publishDeletedSessions(workspaceId, deletedSessions);
+  await context.events?.publish("active-state", "active.end", {
+    active: false,
+    sessionId,
+    sessionIds: deletedSessionIds,
+    source: "pi-web-sidebar",
+    status: "idle",
+    workspaceId,
+  });
+  return deletedSessions;
+}
+
+function createSidebarSession(app: AppElement, workspaceId: string, sessionId: string): void {
+  if (!workspaceId || !sessionId) {
     return;
   }
 
-  await deleteSessionById(app, sessionId);
-  if (app.dataset.activeSessionId === sessionId) {
-    app.dataset.activeSessionId = "";
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-created", { sessionId, status: "idle", workspaceId });
+}
+
+function createdWorkspaceSessionId(app: AppElement, workspaceId: string, existingSessionIds: Set<string>): string {
+  return [...workspaceSessionIds(app, workspaceId)].find((sessionId: string): boolean => {
+    return !existingSessionIds.has(sessionId);
+  }) || "";
+}
+
+function workspaceSessionIds(app: AppElement, workspaceId: string): Set<string> {
+  return new Set(workspaceSessions(app, workspaceId).map((session: SidebarSession): string => session.id));
+}
+
+function workspaceSessions(app: AppElement, workspaceId: string): SidebarSession[] {
+  const workspace = (app.workspaceList || []).find((item): boolean => item.id === workspaceId);
+  return workspace?.sessions || [];
+}
+
+function sessionTree(app: AppElement, workspaceId: string, sessionId: string): SidebarSession[] {
+  const sessions: SidebarSession[] = workspaceSessions(app, workspaceId);
+  const byParentId: Map<string, SidebarSession[]> = new Map();
+
+  for (const session of sessions) {
+    if (!session.parentId) {
+      continue;
+    }
+
+    byParentId.set(session.parentId, [...byParentId.get(session.parentId) || [], session]);
+  }
+
+  const deletedSessions: SidebarSession[] = [];
+  const pendingIds: string[] = [sessionId];
+  const seenIds: Set<string> = new Set();
+
+  while (pendingIds.length > 0) {
+    const currentId: string = pendingIds.shift() || "";
+    if (!currentId || seenIds.has(currentId)) {
+      continue;
+    }
+
+    seenIds.add(currentId);
+    const session: SidebarSession | undefined = sessions.find((item: SidebarSession): boolean => item.id === currentId);
+    if (session) {
+      deletedSessions.push(session);
+    }
+
+    for (const child of byParentId.get(currentId) || []) {
+      pendingIds.push(child.id);
+    }
+  }
+
+  return deletedSessions.length > 0 ? deletedSessions : [{ id: sessionId }];
+}
+
+function publishDeletedSessions(workspaceId: string, sessions: SidebarSession[]): void {
+  const payload: Record<string, unknown> = {
+    sessionIds: sessions.map((session: SidebarSession): string => session.id),
+    sessions,
+    workspaceId,
+  };
+  globalThis.piWeb?.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").next(payload);
+}
+
+function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
+  if (!workspaceId) {
+    return;
+  }
+
+  const escapedWorkspaceId: string = cssEscape(workspaceId);
+  app.workspaceList = (app.workspaceList || []).map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    return workspace.id === workspaceId ? { ...workspace, sessions: [], sessionCount: 0, live: false } : workspace;
+  });
+
+  app.querySelectorAll(`[data-workspace='${escapedWorkspaceId}'][data-session]`).forEach((node: Element): void => {
+    node.remove();
+  });
+
+  const group: HTMLElement | null = app.querySelector(`[data-workspace-group='${escapedWorkspaceId}']`);
+  const sessions: HTMLElement | null = group?.querySelector(".sessions") || null;
+  if (!sessions) {
+    return;
+  }
+
+  sessions.querySelectorAll(".session-row[data-session], .clear-sessions-row").forEach((row: Element): void => row.remove());
+
+  if (!sessions.querySelector(".sessions-empty")) {
+    const empty: HTMLDivElement = document.createElement("div");
+    empty.className = "sessions-empty";
+    empty.textContent = "no sessions yet";
+    sessions.prepend(empty);
   }
 }
 
-function persistSelectedSession(target: HTMLElement): void {
+function clearWorkspaceSessionSelection(app: AppElement, workspaceId: string): void {
+  const activeWorkspaceId: string = app.dataset.activeWorkspaceId || "";
+  const activeSessionId: string = app.dataset.activeSessionId || "";
+  if (activeWorkspaceId && activeWorkspaceId !== workspaceId && !workspaceSessionIds(app, workspaceId).has(activeSessionId)) {
+    return;
+  }
+
+  app.dataset.activeSessionId = "";
+  publishSelectedSessionId(null);
   try {
-    localStorage.setItem(ACTIVE_SESSION_KEY, target.dataset.session || "");
-    localStorage.setItem(ACTIVE_WORKSPACE_KEY, target.dataset.workspace || "");
+    localStorage.setItem(ACTIVE_SESSION_KEY, "");
   } catch {}
+}
+
+function persistSelectedSession(target: HTMLElement, app: AppElement): void {
+  const sessionId: string = target.dataset.session || "";
+  const workspaceId: string = target.dataset.workspace || "";
+  app.dataset.activeSessionId = sessionId;
+  app.dataset.activeWorkspaceId = workspaceId;
+
+  try {
+    localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaceId);
+  } catch {}
+}
+
+function markSelectedWorkspace(target: HTMLElement, app: AppElement): void {
+  const workspaceId: string = target.dataset.workspace || "";
+  app.querySelectorAll(".workspace-group.active, .ws-row.active").forEach((node: Element): void => {
+    node.classList.remove("active");
+    node.setAttribute("aria-current", "false");
+  });
+  const escapedWorkspaceId: string = cssEscape(workspaceId);
+  app.querySelector<HTMLElement>(`[data-workspace-group='${escapedWorkspaceId}']`)?.classList.add("active");
+  const row: HTMLElement | null = app.querySelector(`[data-workspace='${escapedWorkspaceId}'].ws-row`);
+  row?.classList.add("active");
+  row?.setAttribute("aria-current", "true");
+}
+
+function publishSelectedSession(target: HTMLElement): void {
+  const sessionId: string = target.dataset.session || "";
+
+  if (sessionId) {
+    publishSelectedSessionId(sessionId);
+  }
+}
+
+function publishSelectedSessionId(sessionId: string | null): void {
+  globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
 }
 
 function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {
@@ -289,6 +462,19 @@ function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {
       openWorkspaceId: app.sidebarOpenWorkspaceId || "",
     },
   }));
+}
+
+function cssEscape(value: string): string {
+  if (typeof globalThis.CSS?.escape === "function") {
+    return CSS.escape(value);
+  }
+
+  return String(value).replace(/['\\]/g, "\\$&");
+}
+
+function dispatchSidebarEvent(app: AppElement, type: string, detail: Record<string, unknown>): void {
+  const CustomEventConstructor: typeof CustomEvent = app.ownerDocument.defaultView?.CustomEvent || CustomEvent;
+  app.dispatchEvent(new CustomEventConstructor(type, { bubbles: true, detail }));
 }
 
 function eventTarget(event: Event): HTMLElement | null {

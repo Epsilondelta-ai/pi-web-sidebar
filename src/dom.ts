@@ -67,6 +67,19 @@ export function installFallbackDragStyles(): void {
       right: 0;
       z-index: 10;
     }
+    [data-pi-web-sidebar-plugin] .clear-sessions-row {
+      width: 100%;
+      border: 0;
+      border-radius: 8px;
+      padding: 6px 10px 6px 22px;
+      background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+      color: var(--danger, #ef4444);
+      text-align: left;
+      cursor: pointer;
+    }
+    [data-pi-web-sidebar-plugin] .clear-sessions-row:hover {
+      background: color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
+    }
     [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
       display: none !important;
     }

@@ -31,20 +31,38 @@ export async function deleteWorkspaceById(app: AppElement, workspaceId?: string)
   await app.deleteWorkspace?.(workspaceId);
 }
 
-export async function createWorkspaceSession(app: AppElement, workspaceId?: string): Promise<void> {
+export async function createWorkspaceSession(app: AppElement, workspaceId?: string): Promise<string> {
   if (!workspaceId) {
-    return;
+    return "";
   }
 
-  await app.newSession?.(workspaceId);
+  return sessionIdFromResponse(await app.newSession?.(workspaceId));
 }
 
-export async function deleteWorkspaceSessionList(app: AppElement, workspaceId?: string): Promise<void> {
+export async function deleteWorkspaceSessionList(
+  app: AppElement,
+  context: PluginContext,
+  workspaceId?: string,
+): Promise<void> {
   if (!workspaceId) {
     return;
   }
 
   await app.deleteWorkspaceSessions?.(workspaceId);
+  await context.backend?.("delete-workspace-sessions", { data: { workspaceId } });
+}
+
+export async function deleteSessionList(
+  app: AppElement,
+  context: PluginContext,
+  workspaceId: string,
+  sessionIds: string[],
+): Promise<void> {
+  for (const sessionId of sessionIds) {
+    await app.deleteSession?.(sessionId);
+  }
+
+  await context.backend?.("delete-sessions", { data: { sessionIds, workspaceId } });
 }
 
 export async function renameSessionById(app: AppElement, sessionId: string): Promise<SessionRenameResponse> {
@@ -58,6 +76,41 @@ export async function deleteSessionById(app: AppElement, sessionId: string): Pro
 
 export async function openWorkspacePath(app: AppElement, path: string): Promise<void> {
   await app.openWorkspacePath?.(path);
+}
+
+function sessionIdFromResponse(response: unknown): string {
+  if (typeof response === "string") {
+    return response;
+  }
+
+  if (!response || typeof response !== "object") {
+    return "";
+  }
+
+  const record: Record<string, unknown> = response as Record<string, unknown>;
+  const session: unknown = record.session;
+
+  if (typeof record.id === "string") {
+    return record.id;
+  }
+
+  if (typeof record.sessionId === "string") {
+    return record.sessionId;
+  }
+
+  if (session && typeof session === "object") {
+    const sessionRecord: Record<string, unknown> = session as Record<string, unknown>;
+
+    if (typeof sessionRecord.id === "string") {
+      return sessionRecord.id;
+    }
+
+    if (typeof sessionRecord.sessionId === "string") {
+      return sessionRecord.sessionId;
+    }
+  }
+
+  return "";
 }
 
 export async function loadFolders(context: PluginContext, path: string): Promise<FolderListing> {
@@ -119,21 +172,15 @@ function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWo
 }
 
 async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorkspace[]> {
-  const localWorkspaces: SidebarWorkspace[] = readWorkspaceCache();
-
-  if (localWorkspaces.length > 0) {
-    return localWorkspaces;
-  }
-
   const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
 
-  if (!isRecord(result) || !Array.isArray(result.workspaces)) {
-    return [];
+  if (isRecord(result) && Array.isArray(result.workspaces)) {
+    const backendWorkspaces: SidebarWorkspace[] = result.workspaces.filter(isSidebarWorkspace);
+    storeWorkspaceCache(backendWorkspaces);
+    return backendWorkspaces;
   }
 
-  const backendWorkspaces: SidebarWorkspace[] = result.workspaces.filter(isSidebarWorkspace);
-  storeWorkspaceCache(backendWorkspaces);
-  return backendWorkspaces;
+  return readWorkspaceCache();
 }
 
 function readWorkspaceCache(): SidebarWorkspace[] {

@@ -94,7 +94,7 @@ function createWorkspaceStack(workspace: SidebarWorkspace, active: boolean): HTM
   stack.className = "ws-stack";
   name.className = "ws-name";
   dot.className = "dot";
-  dot.classList.toggle("live", active || !!workspace.live);
+  dot.classList.toggle("live", active && (workspaceHasActiveSession(workspace) || !!workspace.live));
   label.className = "label";
   label.textContent = workspace.name || workspace.path || workspace.id;
   path.className = "ws-path";
@@ -222,9 +222,10 @@ function createSessionMenu(session: SidebarSession): HTMLElement {
 function createDeleteWorkspaceSessionsRow(workspaceId: string): HTMLElement {
   const row: HTMLButtonElement = document.createElement("button");
   row.type = "button";
-  row.className = "session-row clear-sessions-row";
+  row.className = "session-row clear-sessions-row danger";
   row.dataset.action = "delete-workspace-sessions";
   row.dataset.workspace = workspaceId;
+  row.setAttribute("aria-label", "delete all sessions in workspace");
   row.innerHTML = '<span class="title">delete all sessions</span>';
   return row;
 }
