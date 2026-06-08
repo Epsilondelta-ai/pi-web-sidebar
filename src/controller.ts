@@ -1,7 +1,7 @@
 import { loadPiStatus, loadStoredWorkspaces, loadWorkspaces, saveWorkspaceCache, type WorkspaceHydrationStep } from "./api";
 import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
-import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
+import { animateMovedSiblings, canMoveSessionNear, measureTops, movableSiblings } from "./drag";
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
 import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
 import { applySidebarGrid, bindHeaderSidebarToggle, bindResizer, restoreSidebarLayout } from "./layout";
@@ -231,7 +231,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function applyActiveEnd(workspaceId: string, sessionId: string, sessionIds: string[] = []): void {
-    const deletedSessionIds: string[] = sessionIds.length > 0 ? sessionIds : [sessionId].filter(Boolean);
+    const requestedSessionIds: string[] = sessionIds.length > 0 ? sessionIds : [sessionId].filter(Boolean);
+    const deletedSessionIds: string[] = expandDeletedSessionIds(workspaces, workspaceId, requestedSessionIds);
     if (deletedSessionIds.length === 0) {
       return;
     }
@@ -512,26 +513,45 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     clearDragState();
   }
 
-  function insertNear(source: HTMLElement | null, target: Element | null, event: DragEvent): boolean {
+  function insertNear(
+    source: HTMLElement | null,
+    target: Element | null,
+    event: DragEvent,
+    movedNodes: HTMLElement[] = [],
+    targetNodes: HTMLElement[] = [],
+  ): boolean {
     if (!source || !target || source === target || !target.parentElement || !wrap) {
       return false;
     }
 
     const htmlTarget: HTMLElement = target as HTMLElement;
+    const nodesToMove: HTMLElement[] = movedNodes.length > 0 ? movedNodes : [source];
+    const nodesAroundTarget: HTMLElement[] = targetNodes.length > 0 ? targetNodes : [htmlTarget];
+    if (nodesToMove.includes(htmlTarget)) {
+      return false;
+    }
+
     const rect: DOMRect | undefined = htmlTarget.getBoundingClientRect?.();
     const after: boolean = rect && Number.isFinite(rect.top) ? event.clientY > rect.top + rect.height / 2 : false;
-    const anchor: ChildNode | null = after ? htmlTarget.nextSibling : htmlTarget;
+    const targetTail: HTMLElement = nodesAroundTarget[nodesAroundTarget.length - 1] || htmlTarget;
+    const anchor: ChildNode | null = after ? targetTail.nextSibling : htmlTarget;
 
-    if (anchor === source) {
+    if (anchor === source || nodesToMove.includes(anchor as HTMLElement)) {
       return false;
     }
 
     const siblings: HTMLElement[] = movableSiblings(source);
     const before: Map<HTMLElement, number> = measureTops(siblings);
+    const fragment: DocumentFragment = document.createDocumentFragment();
     wrap.querySelectorAll(".pi-web-sidebar-drop-target").forEach((node: Element): void => {
       node.classList.remove("pi-web-sidebar-drop-target");
     });
-    htmlTarget.parentElement?.insertBefore(source, anchor);
+
+    for (const node of nodesToMove) {
+      fragment.append(node);
+    }
+
+    htmlTarget.parentElement?.insertBefore(fragment, anchor);
     htmlTarget.classList.add("pi-web-sidebar-drop-target");
     animateMovedSiblings(siblings, before);
     return true;
@@ -545,11 +565,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function moveSessionNear(source: HTMLElement | null, target: Element | null, event: DragEvent): void {
-    if (!source || !target || source.dataset.workspace !== (target as HTMLElement).dataset.workspace) {
+    if (!source || !target || !canMoveSessionNear(source, target as HTMLElement)) {
       return;
     }
 
-    if (insertNear(source, target, event)) {
+    if (insertNear(source, target, event, sessionMoveRows(source), sessionMoveRows(target as HTMLElement))) {
       persistSessionOrder(source.dataset.workspace);
       sidebarBridge.emitEvent("session-order-preview", {
         workspaceId: source.dataset.workspace,
@@ -557,6 +577,33 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       });
     }
   }
+
+  function sessionMoveRows(row: HTMLElement): HTMLElement[] {
+    const workspaceId: string = row.dataset.workspace || "";
+    const sessionId: string = row.dataset.session || "";
+    if (!workspaceId || !sessionId || !wrap) {
+      return [row];
+    }
+
+    const group: HTMLElement | null = wrap.querySelector(`.workspace-group[data-workspace-group='${cssEscape(workspaceId)}']`);
+    const rows: HTMLElement[] = [...group?.querySelectorAll<HTMLElement>(".session-row[data-session]") || []];
+    return rows.filter((candidate: HTMLElement): boolean => candidate === row || isDescendantSessionRow(candidate, sessionId, rows));
+  }
+
+  function isDescendantSessionRow(candidate: HTMLElement, parentSessionId: string, rows: HTMLElement[]): boolean {
+    let parentId: string = candidate.dataset.parentSession || "";
+
+    while (parentId) {
+      if (parentId === parentSessionId) {
+        return true;
+      }
+
+      parentId = rows.find((row: HTMLElement): boolean => row.dataset.session === parentId)?.dataset.parentSession || "";
+    }
+
+    return false;
+  }
+
   function currentWorkspaceOrder(): string[] {
     return [...wrap?.querySelectorAll<HTMLElement>(".workspace-group[data-workspace-group]") || []]
       .map((group: HTMLElement): string => group.dataset.workspaceGroup || "")
@@ -716,6 +763,55 @@ function removeWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: str
     const sessions: SidebarSession[] = (workspace.sessions || []).filter((session): boolean => session.id !== sessionId);
     return { ...workspace, live: workspaceHasLiveSession(sessions), sessionCount: sessions.length, sessions };
   });
+}
+
+function expandDeletedSessionIds(workspaces: SidebarWorkspace[], workspaceId: string, sessionIds: string[]): string[] {
+  const deletedIds: string[] = [];
+  const seenIds: Set<string> = new Set();
+  const childIdsByParentId: Map<string, string[]> = childSessionIdsByParentId(workspaces, workspaceId);
+
+  for (const sessionId of sessionIds) {
+    appendDeletedSessionId(sessionId, childIdsByParentId, deletedIds, seenIds);
+  }
+
+  return deletedIds;
+}
+
+function childSessionIdsByParentId(workspaces: SidebarWorkspace[], workspaceId: string): Map<string, string[]> {
+  const childIdsByParentId: Map<string, string[]> = new Map();
+  const scopedWorkspaces: SidebarWorkspace[] = workspaceId
+    ? workspaces.filter((workspace: SidebarWorkspace): boolean => workspace.id === workspaceId)
+    : workspaces;
+
+  for (const workspace of scopedWorkspaces) {
+    for (const session of workspace.sessions || []) {
+      if (session.parentId) {
+        const childIds: string[] = childIdsByParentId.get(session.parentId) || [];
+        childIds.push(session.id);
+        childIdsByParentId.set(session.parentId, childIds);
+      }
+    }
+  }
+
+  return childIdsByParentId;
+}
+
+function appendDeletedSessionId(
+  sessionId: string,
+  childIdsByParentId: Map<string, string[]>,
+  deletedIds: string[],
+  seenIds: Set<string>,
+): void {
+  if (!sessionId || seenIds.has(sessionId)) {
+    return;
+  }
+
+  seenIds.add(sessionId);
+  deletedIds.push(sessionId);
+
+  for (const childId of childIdsByParentId.get(sessionId) || []) {
+    appendDeletedSessionId(childId, childIdsByParentId, deletedIds, seenIds);
+  }
 }
 
 function mergeOptimisticSessions(
