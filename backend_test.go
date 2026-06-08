@@ -296,6 +296,122 @@ func TestDeleteSessionsRemovesSelectedSessionFiles(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionsRemovesChildSessionFiles(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	parentFile := filepath.Join(sessionDir, "parent.jsonl")
+	childFile := filepath.Join(sessionDir, "child.jsonl")
+	grandchildFile := filepath.Join(sessionDir, "grandchild.jsonl")
+	keepFile := filepath.Join(sessionDir, "keep.jsonl")
+	if err := os.WriteFile(parentFile, []byte(`{"id":"parent"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	if err := os.WriteFile(childFile, []byte(`{"id":"child","parentId":"parent"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write child file: %v", err)
+	}
+	if err := os.WriteFile(grandchildFile, []byte(`{"id":"grandchild","parentId":"child"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write grandchild file: %v", err)
+	}
+	if err := os.WriteFile(keepFile, []byte(`{"id":"keep"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write keep file: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `"}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := deleteSessions("w1", []string{"parent"})
+	if err != nil {
+		t.Fatalf("deleteSessions error = %v", err)
+	}
+	deleted := result["deleted"].([]string)
+	if len(deleted) != 3 {
+		t.Fatalf("deleted = %v, want parent child grandchild", deleted)
+	}
+	for _, path := range []string{parentFile, childFile, grandchildFile} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("deleted file still exists or unexpected error for %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Fatalf("keep file missing: %v", err)
+	}
+}
+
+func TestDeleteWorkspaceSessionsWithListRemovesOnlyListedSessionsAndChildren(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	parentFile := filepath.Join(sessionDir, "parent.jsonl")
+	childFile := filepath.Join(sessionDir, "child.jsonl")
+	keepFile := filepath.Join(sessionDir, "keep.jsonl")
+	if err := os.WriteFile(parentFile, []byte(`{"id":"parent"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	if err := os.WriteFile(childFile, []byte(`{"id":"child","parentId":"parent"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write child file: %v", err)
+	}
+	if err := os.WriteFile(keepFile, []byte(`{"id":"keep"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write keep file: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `"}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := deleteWorkspaceSessions("w1", []string{"parent"})
+	if err != nil {
+		t.Fatalf("deleteWorkspaceSessions error = %v", err)
+	}
+	deleted := result["deleted"].([]string)
+	if len(deleted) != 2 {
+		t.Fatalf("deleted = %v, want parent child", deleted)
+	}
+	for _, path := range []string{parentFile, childFile} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("deleted file still exists or unexpected error for %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Fatalf("keep file missing: %v", err)
+	}
+}
+
 func TestDeleteWorkspaceSessionsRemovesWorkspaceSessionDir(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
@@ -326,7 +442,7 @@ func TestDeleteWorkspaceSessionsRemovesWorkspaceSessionDir(t *testing.T) {
 		t.Fatalf("write session file: %v", err)
 	}
 
-	result, err := deleteWorkspaceSessions("w1")
+	result, err := deleteWorkspaceSessions("w1", nil)
 	if err != nil {
 		t.Fatalf("deleteWorkspaceSessions error = %v", err)
 	}
@@ -349,7 +465,7 @@ func TestDeleteWorkspaceSessionsRequiresKnownWorkspace(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	if _, err := deleteWorkspaceSessions("missing"); err == nil {
+	if _, err := deleteWorkspaceSessions("missing", nil); err == nil {
 		t.Fatal("deleteWorkspaceSessions error = nil, want error")
 	}
 }

@@ -261,7 +261,7 @@ function sessionIsLive(session: SidebarSession): boolean {
   }
 
   const status: string = (session.status || "").toLowerCase();
-  return !!(session.live || session.active || ["running", "thinking", "active", "live"].includes(status));
+  return !!(session.live || ["running", "thinking", "active", "live"].includes(status));
 }
 
 function sessionIsCompleted(session: SidebarSession): boolean {

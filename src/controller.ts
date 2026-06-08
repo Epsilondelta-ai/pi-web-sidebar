@@ -719,7 +719,7 @@ function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
       return false;
     }
 
-    return !!(session.active || session.live || ["active", "live", "running", "thinking"].includes(status));
+    return !!(session.live || ["active", "live", "running", "thinking"].includes(status));
   });
 }
 

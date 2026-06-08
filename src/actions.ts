@@ -128,15 +128,16 @@ async function handleMutatingWorkspaceAction(
   if (action === "delete-workspace-sessions") {
     const workspaceId: string | undefined = target.dataset.workspace;
     const deletedSessions: SidebarSession[] = workspaceSessions(app, workspaceId || "");
-    const deletedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
+    const requestedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
     clearWorkspaceSessionSelection(app, workspaceId || "");
     clearWorkspaceSessionDom(app, workspaceId || "");
-    await deleteWorkspaceSessionList(app, context, workspaceId);
+    const deletedSessionIds: string[] = await deleteWorkspaceSessionList(app, context, workspaceId, requestedSessionIds);
+    const publishedSessions: SidebarSession[] = deletedSessionsForIds(deletedSessions, deletedSessionIds);
     dispatchSidebarEvent(app, "pi-web-sidebar:workspace-sessions-cleared", { sessionIds: deletedSessionIds, workspaceId: workspaceId || "" });
-    publishDeletedSessions(workspaceId || "", deletedSessions);
+    publishDeletedSessions(workspaceId || "", publishedSessions);
     sidebarBridge.emitEvent("delete-workspace-sessions", {
       sessionIds: deletedSessionIds,
-      sessions: deletedSessions,
+      sessions: publishedSessions,
       workspaceId: workspaceId || "",
     });
     await refreshWorkspaces({ emptySessionsForWorkspaceId: workspaceId });
@@ -275,10 +276,11 @@ async function deleteSidebarSession(app: AppElement, context: PluginContext, row
 
   const workspaceId: string = htmlRow.dataset.workspace || "";
   const deletedSessions: SidebarSession[] = sessionTree(app, workspaceId, sessionId);
-  const deletedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
-  await deleteSessionList(app, context, workspaceId, deletedSessionIds);
-  dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, sessionIds: deletedSessionIds, sessions: deletedSessions, workspaceId });
-  publishDeletedSessions(workspaceId, deletedSessions);
+  const requestedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
+  const deletedSessionIds: string[] = await deleteSessionList(app, context, workspaceId, requestedSessionIds);
+  const publishedSessions: SidebarSession[] = deletedSessionsForIds(deletedSessions, deletedSessionIds);
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, sessionIds: deletedSessionIds, sessions: publishedSessions, workspaceId });
+  publishDeletedSessions(workspaceId, publishedSessions);
   await context.events?.publish("active-state", "active.end", {
     active: false,
     sessionId,
@@ -287,7 +289,13 @@ async function deleteSidebarSession(app: AppElement, context: PluginContext, row
     status: "idle",
     workspaceId,
   });
-  return deletedSessions;
+  return publishedSessions;
+}
+
+function deletedSessionsForIds(sessions: SidebarSession[], sessionIds: string[]): SidebarSession[] {
+  return sessionIds.map((sessionId: string): SidebarSession => {
+    return sessions.find((session: SidebarSession): boolean => session.id === sessionId) || { id: sessionId };
+  });
 }
 
 function createSidebarSession(app: AppElement, workspaceId: string, sessionId: string): void {

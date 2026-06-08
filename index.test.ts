@@ -118,6 +118,10 @@ function testContext(app: TestApp, overrides: Partial<TestContext> = {}): TestCo
         return { path: "~/.pi-web/pi-web-sidebar/workspaces.json" };
       }
 
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
       if (method === "pi-status") {
         return { available: true, checkedAt: "2026-06-07T00:00:00.000Z", executable: "/bin/pi", version: "pi test" };
       }
@@ -514,7 +518,11 @@ describe("pi-web-sidebar plugin", () => {
   test("loadWorkspaces returns direct workspace state without waiting for cache save", async () => {
     const app = setupApp();
     const saveDeferred = deferred<unknown>();
-    const context = testContext(app, { backend: async (method) => {
+    const context = testContext(app, { backend: async (method, options) => {
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
       if (method === "save-workspace-cache") {
         return saveDeferred.promise;
       }
@@ -524,12 +532,36 @@ describe("pi-web-sidebar plugin", () => {
 
     const workspaces = await Promise.race([
       loadWorkspaces(context, app),
-      Promise.resolve().then((): string => "save-blocked"),
+      new Promise((resolve: (value: string) => void): void => { setTimeout((): void => resolve("save-blocked"), 20); }),
     ]);
 
     expect(workspaces).toEqual(app.testWorkspaces);
     expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("w1");
     saveDeferred.resolve({});
+  });
+
+  test("loadWorkspaces validates direct workspaces and removes stale local cache", async () => {
+    const app = setupApp();
+    const validatedWorkspaces: SidebarWorkspace[] = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "real" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "stale", active: true }] }];
+    app.workspaceList = app.testWorkspaces;
+    const context = testContext(app, { backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+      if (method === "validate-workspaces") {
+        expect(options.data?.workspaces).toEqual(app.testWorkspaces);
+        return { workspaces: validatedWorkspaces };
+      }
+
+      if (method === "save-workspace-cache") {
+        expect(options.data?.workspaces).toEqual(validatedWorkspaces);
+        return {};
+      }
+
+      return {};
+    } });
+
+    expect(await loadWorkspaces(context, app)).toEqual(validatedWorkspaces);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("real");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).not.toContain("stale");
   });
 
   test("loadWorkspaces uses backend-validated cache before local stale cache", async () => {
@@ -832,7 +864,9 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
     expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
-    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .session-indicator").title).toBe("session inactive");
     expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .meta").hidden).toBe(true);
     expect(app.querySelector("[data-session='completed'] .session-indicator.idle")).toBeTruthy();
     expect(app.querySelector("[data-session='completed'] .session-indicator.live")).toBeFalsy();
@@ -1018,7 +1052,9 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(hostDeleteAllCalls).toBe(1);
     const backendDeletedSessions: boolean = backendCalls.some((call: BackendCallLog): boolean => {
-      return call.method === "delete-workspace-sessions" && call.options.data?.workspaceId === "w1";
+      return call.method === "delete-workspace-sessions"
+        && call.options.data?.workspaceId === "w1"
+        && JSON.stringify(call.options.data?.sessionIds) === JSON.stringify(["s1", "child"]);
     });
     expect(backendDeletedSessions).toBe(true);
     expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "child"]);
@@ -1042,6 +1078,35 @@ describe("pi-web-sidebar plugin", () => {
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", title: "future" }] }];
     await controller.refresh();
     expect(app.querySelector("[data-session='s2']")).toBeTruthy();
+  });
+
+  test("delete all sessions publishes backend-expanded deleted ids", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.workspaceList = app.testWorkspaces;
+    const deletedPayloads: Record<string, unknown>[] = [];
+    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+      deletedPayloads.push(payload);
+    });
+    const context = testContext(app, {
+      backend: async (method: string): Promise<unknown> => {
+        if (method === "delete-workspace-sessions") {
+          return { deleted: ["s1", "hidden-child"] };
+        }
+
+        return {};
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-action='delete-workspace-sessions']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "hidden-child"]);
+    expect(deletedPayloads.at(-1)?.sessions).toEqual([{ id: "s1", title: "new session" }, { id: "hidden-child" }]);
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {
