@@ -67,6 +67,43 @@ func TestCheckPiStatusReturnsUnavailableWhenPiMissing(t *testing.T) {
 	}
 }
 
+func loadValidatedWorkspaceCacheForTest(t *testing.T) request {
+	t.Helper()
+	cached, err := loadWorkspaceCache()
+	if err != nil {
+		t.Fatalf("loadWorkspaceCache error = %v", err)
+	}
+
+	result, err := validateWorkspaces(request{"workspaces": cached["workspaces"]})
+	if err != nil {
+		t.Fatalf("validateWorkspaces error = %v", err)
+	}
+	return result
+}
+
+func TestLoadWorkspaceCacheReturnsRawFileBeforeSessionValidation(t *testing.T) {
+	home := t.TempDir()
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"/missing","live":true,"sessions":[{"id":"stale"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	result, err := loadWorkspaceCache()
+	if err != nil {
+		t.Fatalf("loadWorkspaceCache error = %v", err)
+	}
+
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	if len(workspaceCache["sessions"].([]any)) != 1 || workspaceCache["live"] != true {
+		t.Fatalf("workspaceCache = %v, want raw file contents", workspaceCache)
+	}
+}
+
 func TestLoadWorkspaceCachePrunesMissingSessions(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
@@ -97,10 +134,7 @@ func TestLoadWorkspaceCachePrunesMissingSessions(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	workspaces := result["workspaces"].([]any)
 	workspaceCache := workspaces[0].(map[string]any)
 	sessions := workspaceCache["sessions"].([]any)
@@ -142,10 +176,7 @@ func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
 	var childSession map[string]any
 	for _, item := range sessions {
@@ -189,10 +220,7 @@ func TestLoadWorkspaceCacheUsesProjectSessionDirSetting(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
 	sessions := workspaceCache["sessions"].([]any)
 	if len(sessions) != 1 {
@@ -234,10 +262,7 @@ func TestLoadWorkspaceCacheAddsUncachedExistingSessions(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
 	sessions := workspaceCache["sessions"].([]any)
 	if len(sessions) != 1 {
@@ -289,10 +314,7 @@ func TestLoadWorkspaceCacheNamesUncachedSessionFromFirstChat(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
 	session := sessions[0].(map[string]any)
 	if session["name"] != "첫 채팅 제목" {
@@ -337,16 +359,16 @@ func TestLoadWorkspaceCacheUpdatesCachedSessionMissingName(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	session := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)[0].(map[string]any)
 	if session["name"] != "캐시 보정" || session["active"] != true {
 		t.Fatalf("session = %v, want cached session updated with disk name", session)
 	}
 	if _, ok := session["title"]; ok {
 		t.Fatalf("session = %v, want no legacy title", session)
+	}
+	if _, err := saveWorkspaceCache(result); err != nil {
+		t.Fatalf("saveWorkspaceCache error = %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(cacheDir, "workspaces.json"))
@@ -420,10 +442,7 @@ func TestLoadWorkspaceCacheClearsLiveWhenNoRealSessionsRemain(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", filepath.Join(home, "sessions"))
 
-	result, err := loadWorkspaceCache()
-	if err != nil {
-		t.Fatalf("loadWorkspaceCache error = %v", err)
-	}
+	result := loadValidatedWorkspaceCacheForTest(t)
 	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
 	if len(workspaceCache["sessions"].([]any)) != 0 {
 		t.Fatalf("sessions = %v, want empty", workspaceCache["sessions"])

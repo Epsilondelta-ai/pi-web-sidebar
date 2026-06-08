@@ -35,8 +35,16 @@ if (run.error) {
   process.exit(1);
 }
 
-process.stdout.write(run.stdout || "");
-process.stderr.write(run.stderr || "");
+const stdout = run.stdout || "";
+const stderr = run.stderr || "";
+
+if ((run.status ?? 1) === 0 && isJson(stdout)) {
+  await writeStream(process.stdout, stdout);
+  process.exit(0);
+}
+
+await writeStream(process.stdout, stdout);
+await writeStream(process.stderr, stderr);
 process.exit(run.status ?? 1);
 
 function resolveBinary() {
@@ -44,6 +52,45 @@ function resolveBinary() {
   const arch = { x64: "amd64", arm64: "arm64" }[process.arch];
   if (!os || !arch) return join(dir, "bin", "unsupported", "pi-web-sidebar-backend");
   return join(dir, "bin", `${os}-${arch}`, "pi-web-sidebar-backend");
+}
+
+function isJson(value) {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeStream(stream, value) {
+  if (!value) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      stream.off("error", onError);
+      stream.off("drain", onDrain);
+    };
+
+    stream.once("error", onError);
+    if (stream.write(value)) {
+      cleanup();
+      resolve();
+      return;
+    }
+
+    stream.once("drain", onDrain);
+  });
 }
 
 async function readStdin() {

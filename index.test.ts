@@ -213,6 +213,10 @@ function dragEvent(type: string, options: DragOptions = {}): Event {
   return event;
 }
 
+function nonCacheBackendCalls(context: TestContext): BackendCallLog[] {
+  return (context.backendCalls || []).filter((call: BackendCallLog): boolean => call.method !== "save-workspace-cache");
+}
+
 function requireElement<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
   const element: T | null = root.querySelector<T>(selector);
 
@@ -519,6 +523,10 @@ describe("pi-web-sidebar plugin", () => {
     const app = setupApp();
     const saveDeferred = deferred<unknown>();
     const context = testContext(app, { backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
       if (method === "validate-workspaces") {
         return { workspaces: options.data?.workspaces || [] };
       }
@@ -564,7 +572,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).not.toContain("stale");
   });
 
-  test("loadWorkspaces uses backend-validated cache before local stale cache", async () => {
+  test("loadWorkspaces uses backend file cache before local stale cache", async () => {
     const app = setupApp();
     app.testWorkspaces = [];
     app.workspaceList = [];
@@ -581,6 +589,62 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(await loadWorkspaces(context, app)).toEqual(backendWorkspaces);
     expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("backend");
+  });
+
+  test("controller renders local cache, file cache, then actual session cache in order", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const validateDeferred = deferred<{ workspaces: SidebarWorkspace[] }>();
+    const localWorkspaces: SidebarWorkspace[] = [{ id: "local", name: "local", path: "/local", sessions: [] }];
+    const fileWorkspaces: SidebarWorkspace[] = [{ id: "file", name: "file", path: "/file", sessions: [] }];
+    const actualWorkspaces: SidebarWorkspace[] = [{
+      id: "file",
+      name: "file",
+      path: "/file",
+      sessions: [{ id: "actual", name: "actual" }],
+    }];
+    const saveCalls: SidebarWorkspace[][] = [];
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: fileWorkspaces };
+      }
+
+      if (method === "validate-workspaces") {
+        expect(options.data?.workspaces).toEqual(fileWorkspaces);
+        return validateDeferred.promise;
+      }
+
+      if (method === "save-workspace-cache") {
+        saveCalls.push(options.data?.workspaces as SidebarWorkspace[]);
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: localWorkspaces }));
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='local'] .label").textContent).toBe("local");
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-workspace-group='local']")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='file'] .label").textContent).toBe("file");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("file");
+
+    validateDeferred.resolve({ workspaces: actualWorkspaces });
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='actual']").dataset.title).toBe("actual");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("actual");
+    expect(saveCalls.at(-1)).toEqual(actualWorkspaces);
+    controller.dispose();
   });
 
   test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {
@@ -1454,9 +1518,10 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
+    const calls: BackendCallLog[] = nonCacheBackendCalls(context);
     expect(requireElement<HTMLElement>(app, "[data-new-folder-dialog]").hidden).toBe(true);
-    expect(context.backendCalls!.at(-2)).toEqual({ method: "create-folder", options: { data: { parent: "/home/me", name: "new-dir" } } });
-    expect(context.backendCalls!.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me" } } });
+    expect(calls.at(-2)).toEqual({ method: "create-folder", options: { data: { parent: "/home/me", name: "new-dir" } } });
+    expect(calls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me" } } });
     expect(requireElement<HTMLElement>(app, ".pi-sidebar-picker-row[data-path='/home/me/new-dir']").textContent).toContain("new-dir");
   });
 
@@ -1486,9 +1551,10 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
+    const calls: BackendCallLog[] = nonCacheBackendCalls(context);
     expect(requireElement<HTMLElement>(app, "[data-clone-dialog]").hidden).toBe(true);
-    expect(context.backendCalls!.at(-3)).toEqual({ method: "clone-workspace", options: { data: { parent: "/home/me", gitUrl: "https://example.com/repo.git", name: "repo" } } });
-    expect(context.backendCalls!.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/repo" } } });
+    expect(calls.at(-3)).toEqual({ method: "clone-workspace", options: { data: { parent: "/home/me", gitUrl: "https://example.com/repo.git", name: "repo" } } });
+    expect(calls.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/repo" } } });
     expect(requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/repo");
   });
 
@@ -1512,7 +1578,7 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
-    expect(context.backendCalls!.at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/code" } } });
+    expect(nonCacheBackendCalls(context).at(-1)).toEqual({ method: "list-folders", options: { data: { path: "/home/me/code" } } });
     expect(requireElement<HTMLElement>(app, "[data-pi-web-sidebar-picker]").dataset.currentPath).toBe("/home/me/code");
     expect(app.querySelector(".pi-sidebar-picker-empty")).toBeFalsy();
   });

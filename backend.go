@@ -284,24 +284,7 @@ func loadWorkspaceCache() (request, error) {
 		return request{}, err
 	}
 
-	validated := validateWorkspaceCache(result)
-	if err := writeWorkspaceCacheIfChanged(path, data, validated); err != nil {
-		return request{}, err
-	}
-	return validated, nil
-}
-
-func writeWorkspaceCacheIfChanged(path string, previous []byte, cache request) error {
-	encoded, err := json.MarshalIndent(cache, "", "  ")
-	if err != nil {
-		return err
-	}
-	encoded = append(encoded, '\n')
-
-	if string(encoded) == string(previous) {
-		return nil
-	}
-	return os.WriteFile(path, encoded, 0o600)
+	return result, nil
 }
 
 func validateWorkspaceCache(cache request) request {

@@ -1,4 +1,4 @@
-import { loadPiStatus, loadWorkspaces, saveWorkspaceCache } from "./api";
+import { loadPiStatus, loadStoredWorkspaces, loadWorkspaces, saveWorkspaceCache, type WorkspaceHydrationStep } from "./api";
 import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
 import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
@@ -39,7 +39,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let channelSubscriptions: SubscriptionLike[] = [];
   let optimisticSessionsByWorkspace: Record<string, SidebarSession[]> = {};
   const clearedSessionWorkspaceIds: Set<string> = new Set();
-  let workspaces: SidebarWorkspace[] = Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces : [];
+  let workspaces: SidebarWorkspace[] = initialWorkspaceList();
   const sidebarBridge = createSidebarBridge(app, context, () => workspaces, () => wrap, () => refreshCurrentWorkspaces());
 
   function mount(): void {
@@ -334,6 +334,16 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
   }
 
+  function initialWorkspaceList(): SidebarWorkspace[] {
+    const cachedWorkspaces: SidebarWorkspace[] = loadStoredWorkspaces();
+
+    if (cachedWorkspaces.length > 0) {
+      return cachedWorkspaces;
+    }
+
+    return Array.isArray(context.initialWorkspaces) ? context.initialWorkspaces.filter(isSidebarWorkspace) : [];
+  }
+
   function directWorkspaceList(): SidebarWorkspace[] {
     const source: unknown = Array.isArray(app.workspaceList) ? app.workspaceList : context.initialWorkspaces;
     return Array.isArray(source) ? source.filter(isSidebarWorkspace) : [];
@@ -356,37 +366,56 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     try {
-      const nextWorkspaces: SidebarWorkspace[] = await loadWorkspaces(context, app);
+      const nextWorkspaces: SidebarWorkspace[] = await loadWorkspaces(
+        context,
+        app,
+        (hydratedWorkspaces: SidebarWorkspace[], step: WorkspaceHydrationStep): void => {
+          applyHydratedWorkspaces(sequence, hydratedWorkspaces, options, step);
+        },
+      );
 
       if (sequence !== refreshSequence) {
         return workspaces;
       }
 
-      if (!options.allowEmpty && nextWorkspaces.length === 0 && workspaces.length > 0) {
-        console.warn("pi-web-sidebar skipped transient empty workspace refresh");
-        sidebarBridge.emitEvent("refresh-workspaces-empty-skipped", { workspaceCount: workspaces.length });
-        return workspaces;
-      }
-
-      const refreshedWorkspaces: SidebarWorkspace[] = options.emptySessionsForWorkspaceId
-        ? withoutWorkspaceSessions(nextWorkspaces, app, options.emptySessionsForWorkspaceId)
-        : nextWorkspaces;
-      optimisticSessionsByWorkspace = removeMissingOptimisticSessions(optimisticSessionsByWorkspace, refreshedWorkspaces);
-      workspaces = clearWorkspaceSessionsById(refreshedWorkspaces, clearedSessionWorkspaceIds, app);
-      if (clearedSessionWorkspaceIds.size > 0) {
-        persistWorkspaceCache(workspaces);
-      }
-      if (options.emptySessionsForWorkspaceId) {
-        clearedSessionWorkspaceIds.delete(options.emptySessionsForWorkspaceId);
-      }
-      reconcileActiveWorkspace();
-      renderCurrentWorkspaces();
-      sidebarBridge.emitEvent("refresh-workspaces", { workspaceCount: workspaces.length });
+      applyHydratedWorkspaces(sequence, nextWorkspaces, options, "actual");
     } catch (error) {
       console.warn("pi-web-sidebar failed to refresh workspaces", error);
     }
 
     return workspaces;
+  }
+
+  function applyHydratedWorkspaces(
+    sequence: number,
+    nextWorkspaces: SidebarWorkspace[],
+    options: RefreshOptions,
+    step: WorkspaceHydrationStep,
+  ): void {
+    if (sequence !== refreshSequence) {
+      return;
+    }
+
+    if (!options.allowEmpty && nextWorkspaces.length === 0 && workspaces.length > 0) {
+      console.warn("pi-web-sidebar skipped transient empty workspace refresh");
+      sidebarBridge.emitEvent("refresh-workspaces-empty-skipped", { workspaceCount: workspaces.length, step });
+      return;
+    }
+
+    const refreshedWorkspaces: SidebarWorkspace[] = options.emptySessionsForWorkspaceId
+      ? withoutWorkspaceSessions(nextWorkspaces, app, options.emptySessionsForWorkspaceId)
+      : nextWorkspaces;
+    optimisticSessionsByWorkspace = removeMissingOptimisticSessions(optimisticSessionsByWorkspace, refreshedWorkspaces);
+    workspaces = clearWorkspaceSessionsById(refreshedWorkspaces, clearedSessionWorkspaceIds, app);
+    if (step === "actual" || clearedSessionWorkspaceIds.size > 0) {
+      persistWorkspaceCache(workspaces);
+    }
+    if (options.emptySessionsForWorkspaceId) {
+      clearedSessionWorkspaceIds.delete(options.emptySessionsForWorkspaceId);
+    }
+    reconcileActiveWorkspace();
+    renderCurrentWorkspaces();
+    sidebarBridge.emitEvent("refresh-workspaces", { step, workspaceCount: workspaces.length });
   }
 
   function persistWorkspaceCache(nextWorkspaces: SidebarWorkspace[]): void {
