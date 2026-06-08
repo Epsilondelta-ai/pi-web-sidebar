@@ -1250,9 +1250,10 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
-  test("new session without a host id does not fabricate optimistic sessions", async () => {
+  test("new session without a host id renders optimistic session until real session appears", async () => {
     const app = setupApp();
     const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "old", name: "old session" }] }];
     app.newSession = async (): Promise<unknown> => undefined;
     globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event").subscribe((event) => {
       sidebarEvents.push(event);
@@ -1265,10 +1266,26 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
-    expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(0);
-    expect(app.dataset.activeSessionId || "").toBe("");
-    expect(sidebarEvents.some((event) => event.type === "session.created")).toBe(false);
+    const optimisticRow: HTMLElement = requireElement(app, "[data-workspace-group='w1'] [data-session^='optimistic-']");
+    expect(optimisticRow.textContent).toContain("New chat");
+    expect(app.querySelector("[data-session='old']")).toBeTruthy();
+    expect(sidebarEvents.some((event) => event.type === "session.created")).toBe(true);
     expect(sidebarEvents.some((event) => event.type === "new-session")).toBe(true);
+
+    await controller.refresh();
+
+    expect(app.querySelector("[data-workspace-group='w1'] [data-session^='optimistic-']")).toBeTruthy();
+
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [{ id: "real", name: "real session" }, { id: "old", name: "old session" }],
+    }];
+    await controller.refresh();
+
+    expect(app.querySelector("[data-workspace-group='w1'] [data-session^='optimistic-']")).toBeFalsy();
+    expect(app.querySelector("[data-session='real'] .title")?.textContent).toBe("real session");
   });
 
   test("uses cached workspaces when direct pi state is empty", async () => {
