@@ -329,6 +329,59 @@ func TestLoadWorkspaceCacheDecoratesTeamAgentSessions(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceCacheSkipsMissingTeamAgentSessionFiles(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspace, ".pi", "sessions"), 0o755); err != nil {
+		t.Fatalf("create project sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".pi", "settings.json"), []byte(`{"sessionDir":".pi/sessions"}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	teamID := "019-team"
+	teamsRoot := filepath.Join(home, ".pi", "agent", "custom-teams")
+	teamDir := filepath.Join(teamsRoot, teamID)
+	missingSessionPath := filepath.Join(teamDir, "sessions", "missing.jsonl")
+	if err := os.MkdirAll(filepath.Dir(missingSessionPath), 0o755); err != nil {
+		t.Fatalf("create team session dir: %v", err)
+	}
+	config := map[string]any{
+		"members": []any{
+			map[string]any{
+				"name":        "Emilia",
+				"role":        "worker",
+				"cwd":         workspace,
+				"sessionFile": missingSessionPath,
+			},
+		},
+	}
+	configData, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "config.json"), configData, 0o600); err != nil {
+		t.Fatalf("write team config: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_TEAMS_ROOT_DIR", " custom-teams ")
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
+	if len(sessions) != 0 {
+		t.Fatalf("sessions = %v, want no stale team child", sessions)
+	}
+}
+
 func TestLoadWorkspaceCacheDoesNotInferKindFromWorkspacePath(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "team-workspace")
@@ -898,6 +951,87 @@ func TestDeleteWorkspaceSessionsRemovesWorkspaceSessionDir(t *testing.T) {
 	}
 	if _, err := os.Stat(sessionDir); !os.IsNotExist(err) {
 		t.Fatalf("session dir still exists or unexpected error: %v", err)
+	}
+}
+
+func TestDeleteWorkspaceSessionsRemovesTeamAgentSessions(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `"}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	teamID := "019-team"
+	teamsRoot := filepath.Join(home, ".pi", "agent", "custom-teams")
+	teamDir := filepath.Join(teamsRoot, teamID)
+	teamSessionPath := filepath.Join(teamDir, "sessions", "worker.jsonl")
+	keepSessionPath := filepath.Join(teamDir, "sessions", "keep.jsonl")
+	if err := os.MkdirAll(filepath.Dir(teamSessionPath), 0o755); err != nil {
+		t.Fatalf("create team session dir: %v", err)
+	}
+	if err := os.WriteFile(teamSessionPath, []byte(`{"type":"session","id":"team-child"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write team session: %v", err)
+	}
+	if err := os.WriteFile(keepSessionPath, []byte(`{"type":"session","id":"keep-child"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write keep team session: %v", err)
+	}
+	config := map[string]any{
+		"members": []any{
+			map[string]any{"name": "team-lead", "role": "lead"},
+			map[string]any{"name": "Emilia", "role": "worker", "cwd": workspace, "sessionFile": teamSessionPath},
+			map[string]any{"name": "Rem", "role": "worker", "cwd": filepath.Join(home, "other"), "sessionFile": keepSessionPath},
+		},
+	}
+	configData, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "config.json"), configData, 0o600); err != nil {
+		t.Fatalf("write team config: %v", err)
+	}
+
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+	t.Setenv("PI_TEAMS_ROOT_DIR", " custom-teams ")
+
+	result, err := deleteWorkspaceSessions("w1", []string{"team-child"})
+	if err != nil {
+		t.Fatalf("deleteWorkspaceSessions error = %v", err)
+	}
+	deleted := result["deleted"].([]string)
+	if len(deleted) != 1 || deleted[0] != "team-child" {
+		t.Fatalf("deleted = %v, want team-child", deleted)
+	}
+	if _, err := os.Stat(teamSessionPath); !os.IsNotExist(err) {
+		t.Fatalf("team session still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(keepSessionPath); err != nil {
+		t.Fatalf("keep team session missing: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(teamDir, "config.json"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(data, &updated); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	members := updated["members"].([]any)
+	for _, item := range members {
+		member := item.(map[string]any)
+		if member["name"] == "Emilia" {
+			t.Fatalf("deleted team member still in config: %v", members)
+		}
 	}
 }
 

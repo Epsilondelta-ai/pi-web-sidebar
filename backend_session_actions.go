@@ -89,6 +89,11 @@ func deleteSessions(workspaceID string, sessionIDs []string) (request, error) {
 	if err != nil {
 		return request{}, err
 	}
+	teamDeleted, err := removeTeamSessionsForWorkspace(workspacePath, deleteSet, false)
+	if err != nil {
+		return request{}, err
+	}
+	deleted = sortedCombinedDeletedSessionIDs(deleted, teamDeleted)
 
 	return request{"deleted": deleted, "workspaceId": workspaceID}, nil
 }
@@ -110,10 +115,18 @@ func deleteWorkspaceSessions(workspaceID string, sessionIDs []string) (request, 
 		if err != nil {
 			return request{}, err
 		}
+		teamDeleted, err := removeTeamSessionsForWorkspace(workspacePath, deleteSet, false)
+		if err != nil {
+			return request{}, err
+		}
+		deleted = sortedCombinedDeletedSessionIDs(deleted, teamDeleted)
 		return request{"deleted": deleted, "path": sessionDir, "workspaceId": workspaceID}, nil
 	}
 
 	if err := os.RemoveAll(sessionDir); err != nil {
+		return request{}, err
+	}
+	if _, err := removeTeamSessionsForWorkspace(workspacePath, nil, true); err != nil {
 		return request{}, err
 	}
 
@@ -201,6 +214,17 @@ func sortedDeletedSessionIDs(deleteSet map[string]bool) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func sortedCombinedDeletedSessionIDs(left []string, right []string) []string {
+	deleteSet := map[string]bool{}
+	for _, id := range left {
+		deleteSet[id] = true
+	}
+	for _, id := range right {
+		deleteSet[id] = true
+	}
+	return sortedDeletedSessionIDs(deleteSet)
 }
 
 func sessionRecordsForSessionDir(sessionDir string) []map[string]any {
