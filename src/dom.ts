@@ -39,7 +39,13 @@ export function installFallbackDragStyles(): void {
       align-items: center;
       gap: 4px;
       position: relative;
-      padding-left: 12px;
+      padding-left: calc(12px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
+    }
+    [data-pi-web-sidebar-plugin] .session-row.child-session::before {
+      content: "↳";
+      position: absolute;
+      left: calc(4px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
+      color: var(--fg-3, #6b7280);
     }
     [data-pi-web-sidebar-plugin] .session-row[data-session] .session-main {
       display: flex;

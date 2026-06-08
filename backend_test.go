@@ -115,6 +115,53 @@ func TestLoadWorkspaceCachePrunesMissingSessions(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionDir := filepath.Join(workspace, ".pi", "sessions")
+	parentID := "019-parent"
+	parentName := "2026-06-08T00-00-00Z_" + parentID + ".jsonl"
+	childDir := filepath.Join(sessionDir, parentName, "abcd1234", "run-0")
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
+		t.Fatalf("create child dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".pi", "settings.json"), []byte(`{"sessionDir":".pi/sessions"}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	child := []byte(`{"type":"session","id":"child"}` + "\n" + `{"type":"session_info","name":"subagent-reviewer-abcd1234-1"}` + "\n")
+	if err := os.WriteFile(filepath.Join(childDir, "session.jsonl"), child, 0o600); err != nil {
+		t.Fatalf("write child session: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	result, err := loadWorkspaceCache()
+	if err != nil {
+		t.Fatalf("loadWorkspaceCache error = %v", err)
+	}
+	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
+	var childSession map[string]any
+	for _, item := range sessions {
+		session := item.(map[string]any)
+		if session["id"] == "child" {
+			childSession = session
+		}
+	}
+	if childSession == nil {
+		t.Fatalf("sessions = %v, want child", sessions)
+	}
+	if childSession["parentId"] != parentID || childSession["kind"] != "subagent" || childSession["title"] != "subagent-reviewer-abcd1234-1" {
+		t.Fatalf("childSession = %v, want decorated subagent child", childSession)
+	}
+}
+
 func TestLoadWorkspaceCacheUsesProjectSessionDirSetting(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")

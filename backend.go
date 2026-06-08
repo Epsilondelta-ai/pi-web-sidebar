@@ -358,13 +358,14 @@ func sessionRecordsForWorkspacePath(workspacePath string) map[string]map[string]
 		return nil
 	}
 
-	sessions := map[string]map[string]any{}
+	sessions := syntheticParentSessions(sessionDir)
 	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
 
 		session := sessionRecordFromFile(path)
+		decorateSessionRecord(session, path, sessionDir)
 		id := stringFromAny(session["id"])
 		if id != "" {
 			sessions[id] = session
@@ -375,6 +376,26 @@ func sessionRecordsForWorkspacePath(workspacePath string) map[string]map[string]
 			return sessions
 		}
 		return nil
+	}
+	return sessions
+}
+
+func syntheticParentSessions(sessionDir string) map[string]map[string]any {
+	sessions := map[string]map[string]any{}
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		return sessions
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		id := sessionIDFromSessionFileName(entry.Name())
+		if id != "" {
+			sessions[id] = map[string]any{"id": id, "title": id}
+		}
 	}
 	return sessions
 }
@@ -409,7 +430,75 @@ func sessionRecordFromFile(path string) map[string]any {
 	if err := decoder.Decode(&header); err != nil {
 		return map[string]any{}
 	}
+
+	for i := 0; i < 12; i++ {
+		var event map[string]any
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		if event["type"] == "session_info" {
+			mergeSessionInfo(header, event)
+		}
+	}
 	return header
+}
+
+func mergeSessionInfo(session map[string]any, info map[string]any) {
+	name := strings.TrimSpace(stringFromAny(info["name"]))
+	if name != "" && strings.TrimSpace(stringFromAny(session["title"])) == "" {
+		session["title"] = name
+	}
+	if name != "" && strings.TrimSpace(stringFromAny(session["name"])) == "" {
+		session["name"] = name
+	}
+}
+
+func decorateSessionRecord(session map[string]any, path string, sessionDir string) {
+	relativePath, err := filepath.Rel(sessionDir, path)
+	if err == nil {
+		parts := strings.Split(filepath.ToSlash(relativePath), "/")
+		if len(parts) > 1 {
+			parentID := sessionIDFromSessionFileName(parts[0])
+			if parentID != "" {
+				session["parentId"] = parentID
+			}
+		}
+	}
+
+	kind := sessionKind(session, path)
+	if kind != "" {
+		session["kind"] = kind
+	}
+}
+
+func sessionIDFromSessionFileName(name string) string {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	index := strings.LastIndex(base, "_")
+	if index < 0 || index == len(base)-1 {
+		return ""
+	}
+	return base[index+1:]
+}
+
+func sessionKind(session map[string]any, path string) string {
+	text := strings.ToLower(strings.Join([]string{
+		path,
+		stringFromAny(session["kind"]),
+		stringFromAny(session["title"]),
+		stringFromAny(session["name"]),
+		stringFromAny(session["agent"]),
+		stringFromAny(session["agentName"]),
+		stringFromAny(session["teammate"]),
+		stringFromAny(session["role"]),
+		stringFromAny(session["source"]),
+	}, " "))
+	if strings.Contains(text, "team") || strings.Contains(text, "teammate") {
+		return "team agent"
+	}
+	if strings.Contains(text, "subagent") || strings.Contains(filepath.ToSlash(path), "/run-") {
+		return "subagent"
+	}
+	return ""
 }
 
 func workspaceHasLiveSession(sessions []any) bool {

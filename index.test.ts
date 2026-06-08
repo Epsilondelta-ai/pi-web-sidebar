@@ -845,6 +845,30 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
   });
 
+  test("session rows render subagent and team agent tree badges", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", title: "parent" },
+        { id: "sub", parentId: "parent", title: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "parent", title: "team worker", kind: "team agent" },
+      ],
+    }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+
+    const rows: HTMLElement[] = [...app.querySelectorAll<HTMLElement>("[data-workspace-group='w1'] .session-row[data-session]")];
+    expect(rows.map((row: HTMLElement): string => row.dataset.session || "")).toEqual(["parent", "sub", "team"]);
+    expect(requireElement<HTMLElement>(app, "[data-session='sub']").dataset.depth).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='team']").dataset.depth).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='sub'] .meta").textContent).toBe("subagent");
+    expect(requireElement<HTMLElement>(app, "[data-session='team'] .meta").textContent).toBe("team agent");
+  });
+
   test("session rows use active or inactive left indicators without waiting text", async () => {
     const app = setupApp();
     app.testWorkspaces = [{
@@ -912,7 +936,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(sidebarStyle).toContain(".session-row[data-session]");
     expect(sidebarStyle).toContain(".session-row[data-session] .session-main");
     expect(sidebarStyle).toContain("text-overflow: ellipsis");
-    expect(sidebarStyle).toContain("padding-left: 12px");
+    expect(sidebarStyle).toContain("--pi-web-sidebar-session-depth");
+    expect(sidebarStyle).toContain(".session-row.child-session::before");
     expect(sidebarStyle).toContain(".clear-sessions-row");
   });
 

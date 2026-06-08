@@ -131,8 +131,8 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
   sessions.className = "sessions";
   sessions.hidden = !open;
 
-  for (const session of orderedSessions(workspace)) {
-    sessions.append(createPluginSessionRow(session, workspace, app));
+  for (const item of orderedSessionTree(workspace)) {
+    sessions.append(createPluginSessionRow(item.session, workspace, app, item.depth));
   }
 
   if (!workspace.sessions?.length) {
@@ -148,7 +148,7 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
   return sessions;
 }
 
-function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorkspace, app: AppElement): HTMLElement {
+function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorkspace, app: AppElement, depth: number): HTMLElement {
   const selected: boolean = session.id === app.dataset.activeSessionId;
   const titleText: string = sessionDisplayTitle(session);
   const row: HTMLDivElement = document.createElement("div");
@@ -159,6 +159,8 @@ function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorks
   row.dataset.workspace = workspace.id;
   row.dataset.title = titleText;
   row.dataset.lastUsed = session.lastUsed || "";
+  row.dataset.depth = String(depth);
+  row.style.setProperty("--pi-web-sidebar-session-depth", String(depth));
 
   if (session.parentId) {
     row.dataset.parentSession = session.parentId;
@@ -297,9 +299,48 @@ function orderedWorkspaces(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
   return applyStoredOrder(workspaces, readStoredList("pi.workspaceOrder"));
 }
 
-function orderedSessions(workspace: SidebarWorkspace): SidebarSession[] {
+function orderedSessionTree(workspace: SidebarWorkspace): { session: SidebarSession; depth: number }[] {
   const orders: Record<string, string[]> = readStoredObject("pi.sessionOrder");
-  return applyStoredOrder(workspace.sessions || [], orders[workspace.id] || []);
+  const ordered: SidebarSession[] = applyStoredOrder(workspace.sessions || [], orders[workspace.id] || []);
+  const byParentId: Map<string, SidebarSession[]> = new Map();
+  const seenIds: Set<string> = new Set(ordered.map((session: SidebarSession): string => session.id));
+
+  for (const session of ordered) {
+    const parentId: string = session.parentId || "";
+    if (!parentId || !seenIds.has(parentId)) {
+      continue;
+    }
+
+    byParentId.set(parentId, [...byParentId.get(parentId) || [], session]);
+  }
+
+  const rows: { session: SidebarSession; depth: number }[] = [];
+  const visitedIds: Set<string> = new Set();
+  const appendSession = (session: SidebarSession, depth: number): void => {
+    if (visitedIds.has(session.id)) {
+      return;
+    }
+
+    visitedIds.add(session.id);
+    rows.push({ session, depth });
+    for (const child of byParentId.get(session.id) || []) {
+      appendSession(child, depth + 1);
+    }
+  };
+
+  for (const session of ordered) {
+    if (session.parentId && seenIds.has(session.parentId)) {
+      continue;
+    }
+
+    appendSession(session, 0);
+  }
+
+  for (const session of ordered) {
+    appendSession(session, 0);
+  }
+
+  return rows;
 }
 
 function applyStoredOrder<T extends { id: string }>(items: T[], order: string[]): T[] {
