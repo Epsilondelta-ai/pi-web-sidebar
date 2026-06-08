@@ -7,7 +7,7 @@
     "build": "bun build src/index.ts --outfile index.js --target browser --format esm --sourcemap=none --minify",
     "test": "bun test",
     "test:coverage": "bun ./scripts/check-coverage.js",
-    "test:backend": "go test backend.go backend_test.go",
+    "test:backend": "go test backend*.go",
     "validate": "bun ./scripts/validate.js",
     "build:backend": "./scripts/build-backends.sh",
     "check": "bun run build && bun run typecheck && bun run test:backend && bun run test:coverage && bun run validate",

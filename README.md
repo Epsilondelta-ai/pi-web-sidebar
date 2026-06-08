@@ -25,7 +25,7 @@ Use pi-web settings → Plugins → local path, then install this plugin folder.
 - `index.d.ts` — TypeScript declaration bridge for the bundled plugin entry.
 - `index.test.ts` / `entry.test.ts` — Bun unit tests and bundled-entry smoke test.
 - `tsconfig.json` — TypeScript typecheck configuration.
-- `backend.go` — Go backend implementation for the custom workspace folder browser.
+- `backend*.go` — Go backend implementation for the custom workspace folder browser and session cache.
 - `backend.js` — Node wrapper that executes the prebuilt Go backend binary.
 - `bin/<os>-<arch>/pi-web-sidebar-backend` — prebuilt backend binary for Linux/macOS on amd64/arm64.
 
