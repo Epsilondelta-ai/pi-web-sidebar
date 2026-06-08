@@ -544,11 +544,11 @@ describe("pi-web-sidebar plugin", () => {
     ]);
 
     expect(workspaces).toEqual(app.testWorkspaces);
-    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("w1");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toBeNull();
     saveDeferred.resolve({});
   });
 
-  test("loadWorkspaces validates direct workspaces and removes stale local cache", async () => {
+  test("loadWorkspaces validates direct workspaces without persisting outside controller guard", async () => {
     const app = setupApp();
     const validatedWorkspaces: SidebarWorkspace[] = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "real" }] }];
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "stale", active: true }] }];
@@ -568,11 +568,10 @@ describe("pi-web-sidebar plugin", () => {
     } });
 
     expect(await loadWorkspaces(context, app)).toEqual(validatedWorkspaces);
-    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("real");
-    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).not.toContain("stale");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toBeNull();
   });
 
-  test("loadWorkspaces uses backend file cache before local stale cache", async () => {
+  test("loadWorkspaces returns backend file cache before local stale cache", async () => {
     const app = setupApp();
     app.testWorkspaces = [];
     app.workspaceList = [];
@@ -588,7 +587,7 @@ describe("pi-web-sidebar plugin", () => {
     localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
 
     expect(await loadWorkspaces(context, app)).toEqual(backendWorkspaces);
-    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("backend");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("local");
   });
 
   test("controller renders local cache, file cache, then actual session cache in order", async () => {
@@ -645,6 +644,116 @@ describe("pi-web-sidebar plugin", () => {
     expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("actual");
     expect(saveCalls.at(-1)).toEqual(actualWorkspaces);
     controller.dispose();
+  });
+
+  test("controller ignores stale actual persistence from an older refresh", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    const firstValidate = deferred<{ workspaces: SidebarWorkspace[] }>();
+    const secondValidate = deferred<{ workspaces: SidebarWorkspace[] }>();
+    const staleWorkspaces: SidebarWorkspace[] = [{ id: "stale", name: "stale", path: "/stale", sessions: [] }];
+    const actualWorkspaces: SidebarWorkspace[] = [{ id: "actual", name: "actual", path: "/actual", sessions: [] }];
+    app.workspaceList = staleWorkspaces;
+    const saveCalls: SidebarWorkspace[][] = [];
+    let validateCalls = 0;
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "validate-workspaces") {
+        validateCalls += 1;
+        return validateCalls === 1 ? firstValidate.promise : secondValidate.promise;
+      }
+
+      if (method === "save-workspace-cache") {
+        saveCalls.push(options.data?.workspaces as SidebarWorkspace[]);
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+    app.workspaceList = actualWorkspaces;
+    const refreshPromise = globalThis.piWebSidebar!.refresh();
+    secondValidate.resolve({ workspaces: actualWorkspaces });
+    await refreshPromise;
+    firstValidate.resolve({ workspaces: staleWorkspaces });
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-workspace-group='stale']")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='actual'] .label").textContent).toBe("actual");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("actual");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).not.toContain("stale");
+    expect(saveCalls).toEqual([actualWorkspaces]);
+    controller.dispose();
+  });
+
+  test("controller ignores stale file cache localStorage from an older refresh", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [];
+    app.workspaceList = [];
+    const firstCache = deferred<{ workspaces: SidebarWorkspace[] }>();
+    const staleWorkspaces: SidebarWorkspace[] = [{ id: "stale-file", name: "stale-file", path: "/stale-file", sessions: [] }];
+    const actualWorkspaces: SidebarWorkspace[] = [{ id: "actual", name: "actual", path: "/actual", sessions: [] }];
+    let cacheCalls = 0;
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        cacheCalls += 1;
+        return cacheCalls === 1 ? firstCache.promise : { workspaces: [] };
+      }
+
+      if (method === "validate-workspaces") {
+        return { workspaces: actualWorkspaces };
+      }
+
+      if (method === "save-workspace-cache") {
+        return {};
+      }
+
+      if (method === "pi-status") {
+        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+    app.workspaceList = actualWorkspaces;
+    await globalThis.piWebSidebar!.refresh();
+    firstCache.resolve({ workspaces: staleWorkspaces });
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-workspace-group='stale-file']")).toBeFalsy();
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("actual");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).not.toContain("stale-file");
+    controller.dispose();
+  });
+
+  test("loadWorkspaces falls back to direct workspaces when file cache backend fails", async () => {
+    const app = setupApp();
+    const context = testContext(app, { backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        throw new Error("legacy backend without cache method");
+      }
+
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+
+    expect(await loadWorkspaces(context, app)).toEqual(app.testWorkspaces);
   });
 
   test("loadWorkspaces rechecks direct workspace state after cache fallback latency", async () => {

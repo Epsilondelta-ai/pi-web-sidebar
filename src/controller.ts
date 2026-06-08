@@ -407,6 +407,9 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       : nextWorkspaces;
     optimisticSessionsByWorkspace = removeMissingOptimisticSessions(optimisticSessionsByWorkspace, refreshedWorkspaces);
     workspaces = clearWorkspaceSessionsById(refreshedWorkspaces, clearedSessionWorkspaceIds, app);
+    if (step === "file") {
+      storeJson(WORKSPACE_CACHE_KEY, { workspaces });
+    }
     if (step === "actual" || clearedSessionWorkspaceIds.size > 0) {
       persistWorkspaceCache(workspaces);
     }
