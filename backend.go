@@ -431,6 +431,7 @@ func sessionRecordFromFile(path string) map[string]any {
 		return map[string]any{}
 	}
 
+	firstChatName := ""
 	for i := 0; i < 12; i++ {
 		var event map[string]any
 		if err := decoder.Decode(&event); err != nil {
@@ -439,18 +440,56 @@ func sessionRecordFromFile(path string) map[string]any {
 		if event["type"] == "session_info" {
 			mergeSessionInfo(header, event)
 		}
+		if firstChatName == "" {
+			firstChatName = firstUserChatText(event)
+		}
 	}
+	mergeSessionName(header, firstChatName)
 	return header
 }
 
 func mergeSessionInfo(session map[string]any, info map[string]any) {
-	name := strings.TrimSpace(stringFromAny(info["name"]))
+	mergeSessionName(session, strings.TrimSpace(stringFromAny(info["name"])))
+}
+
+func mergeSessionName(session map[string]any, name string) {
 	if name != "" && strings.TrimSpace(stringFromAny(session["title"])) == "" {
 		session["title"] = name
 	}
 	if name != "" && strings.TrimSpace(stringFromAny(session["name"])) == "" {
 		session["name"] = name
 	}
+}
+
+func firstUserChatText(event map[string]any) string {
+	message, ok := event["message"].(map[string]any)
+	if !ok || stringFromAny(message["role"]) != "user" {
+		return ""
+	}
+	return firstTextContent(message["content"])
+}
+
+func firstTextContent(content any) string {
+	if text := strings.TrimSpace(stringFromAny(content)); text != "" {
+		return text
+	}
+
+	items, ok := content.([]any)
+	if !ok {
+		return ""
+	}
+
+	for _, item := range items {
+		part, ok := item.(map[string]any)
+		if !ok || stringFromAny(part["type"]) != "text" {
+			continue
+		}
+
+		if text := strings.TrimSpace(stringFromAny(part["text"])); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func decorateSessionRecord(session map[string]any, path string, sessionDir string) {

@@ -249,6 +249,51 @@ func TestLoadWorkspaceCacheAddsUncachedExistingSessions(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceCacheNamesUncachedSessionFromFirstChat(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	uncachedSession := []byte(
+		`{"id":"uncached"}` + "\n" +
+			`{"type":"message","message":{"role":"user","content":[{"type":"text","text":"첫 채팅 제목"}]}}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "uncached.jsonl"), uncachedSession, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := loadWorkspaceCache()
+	if err != nil {
+		t.Fatalf("loadWorkspaceCache error = %v", err)
+	}
+	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
+	session := sessions[0].(map[string]any)
+	if session["title"] != "첫 채팅 제목" || session["name"] != "첫 채팅 제목" {
+		t.Fatalf("session = %v, want first chat title/name", session)
+	}
+}
+
 func TestSaveWorkspaceCachePrunesMissingSessionsBeforeWriting(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
