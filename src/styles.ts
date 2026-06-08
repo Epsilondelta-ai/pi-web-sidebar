@@ -181,13 +181,13 @@ export const PLUGIN_STYLE_TEXT: string = `
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center; gap: 4px; position: relative;
-    padding-left: calc(12px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
+    padding-left: calc(6px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
   }
 
   [data-pi-web-sidebar-plugin] .session-row.child-session::before {
     content: "↳";
     position: absolute;
-    left: calc(4px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
+    left: calc(2px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
     color: var(--pi-web-sidebar-fg-dim);
   }
 

@@ -1,5 +1,12 @@
 import { ICONS, PLUGIN_PANEL_ATTR } from "./constants";
-import { readStoredList, readStoredObject } from "./storage";
+import { orderedSessionTree, orderedWorkspaces } from "./render-order";
+import {
+  sessionBadges,
+  sessionDisplayName,
+  sessionIndicatorLabel,
+  sessionIsLive,
+  workspaceSessionCount,
+} from "./render-session-utils";
 import type { AppElement, SidebarSession, SidebarWorkspace } from "./types";
 
 export function renderPluginWorkspaceList(
@@ -23,9 +30,9 @@ export function renderPluginWorkspaceList(
     return;
   }
 
-  for (const workspace of orderedWorkspaces(workspaces)) {
+  orderedWorkspaces(workspaces).forEach((workspace: SidebarWorkspace): void => {
     section.append(createPluginWorkspaceGroup(workspace, app));
-  }
+  });
 }
 
 function createEmptyWorkspaceState(): HTMLElement {
@@ -63,7 +70,12 @@ function createPluginWorkspaceGroup(workspace: SidebarWorkspace, app: AppElement
   return group;
 }
 
-function createWorkspaceShell(workspace: SidebarWorkspace, app: AppElement, open: boolean, active: boolean): HTMLElement {
+function createWorkspaceShell(
+  workspace: SidebarWorkspace,
+  app: AppElement,
+  open: boolean,
+  active: boolean,
+): HTMLElement {
   const shell: HTMLDivElement = document.createElement("div");
   shell.className = "workspace-shell";
   shell.append(createWorkspaceButton(workspace, app, open, active));
@@ -71,10 +83,16 @@ function createWorkspaceShell(workspace: SidebarWorkspace, app: AppElement, open
   return shell;
 }
 
-function createWorkspaceButton(workspace: SidebarWorkspace, app: AppElement, open: boolean, active: boolean): HTMLElement {
+function createWorkspaceButton(
+  workspace: SidebarWorkspace,
+  app: AppElement,
+  open: boolean,
+  active: boolean,
+): HTMLElement {
   const button: HTMLButtonElement = document.createElement("button");
+  const activeSessionClass: boolean = workspaceHasActiveSession(workspace);
   button.type = "button";
-  button.className = ["ws-row", open && "open", active && "active", workspaceHasActiveSession(workspace) && "has-active-session"]
+  button.className = ["ws-row", open && "open", active && "active", activeSessionClass && "has-active-session"]
     .filter(Boolean)
     .join(" ");
   button.dataset.action = "toggle-workspace";
@@ -131,9 +149,9 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
   sessions.className = "sessions";
   sessions.hidden = !open;
 
-  for (const item of orderedSessionTree(workspace)) {
+  orderedSessionTree(workspace).forEach((item: { session: SidebarSession; depth: number }): void => {
     sessions.append(createPluginSessionRow(item.session, workspace, app, item.depth));
-  }
+  });
 
   if (!workspace.sessions?.length) {
     const empty: HTMLDivElement = document.createElement("div");
@@ -148,7 +166,12 @@ function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: 
   return sessions;
 }
 
-function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorkspace, app: AppElement, depth: number): HTMLElement {
+function createPluginSessionRow(
+  session: SidebarSession,
+  workspace: SidebarWorkspace,
+  app: AppElement,
+  depth: number,
+): HTMLElement {
   const selected: boolean = session.id === app.dataset.activeSessionId;
   const nameText: string = sessionDisplayName(session);
   const row: HTMLDivElement = document.createElement("div");
@@ -167,7 +190,11 @@ function createPluginSessionRow(session: SidebarSession, workspace: SidebarWorks
   }
 
   row.setAttribute("aria-current", selected ? "true" : "false");
-  row.append(createSessionMain(session, workspace.id, nameText), createSessionMenuButton(session), createSessionMenu(session));
+  row.append(
+    createSessionMain(session, workspace.id, nameText),
+    createSessionMenuButton(session),
+    createSessionMenu(session),
+  );
   return row;
 }
 
@@ -216,7 +243,8 @@ function createSessionMenu(session: SidebarSession): HTMLElement {
   menu.hidden = true;
   menu.innerHTML = [
     `<button type="button" role="menuitem" data-action="rename-session">${ICONS.pencil}<span>rename</span></button>`,
-    `<button type="button" role="menuitem" class="danger" data-action="delete-session">${ICONS.trash}<span>delete</span></button>`,
+    `<button type="button" role="menuitem" class="danger" data-action="delete-session">${ICONS.trash}` +
+      "<span>delete</span></button>",
   ].join("");
   return menu;
 }
@@ -240,129 +268,6 @@ function createNewSessionRow(workspaceId: string): HTMLElement {
   row.dataset.workspace = workspaceId;
   row.innerHTML = `<span class="title">${ICONS.plus} new session</span>`;
   return row;
-}
-
-function sessionBadges(session: SidebarSession): string[] {
-  const badges: string[] = [];
-  const kind: string = session.kind?.trim() || "";
-
-  if (kind && !isStatusLabel(kind)) {
-    badges.push(kind);
-  }
-
-  return badges;
-}
-
-function sessionIndicatorLabel(session: SidebarSession): string {
-  return sessionIsLive(session) ? "session active" : "session inactive";
-}
-
-function sessionIsLive(session: SidebarSession): boolean {
-  if (sessionIsCompleted(session)) {
-    return false;
-  }
-
-  const status: string = (session.status || "").toLowerCase();
-  return !!(session.live || ["running", "thinking", "active", "live"].includes(status));
-}
-
-function sessionIsCompleted(session: SidebarSession): boolean {
-  const status: string = (session.status || "").toLowerCase();
-  return !!(session.unreadCompleted || ["complete", "completed", "done", "failed", "success"].includes(status));
-}
-
-function isStatusLabel(value: string): boolean {
-  const label: string = value.trim().toLowerCase();
-  return ["active", "complete", "completed", "done", "failed", "idle", "live", "running", "success", "thinking", "waiting"]
-    .includes(label);
-}
-
-function sessionDisplayName(session: SidebarSession): string {
-  const name: string = session.name || "";
-
-  if (name && !isStatusLabel(name)) {
-    return normalizeSessionName(name);
-  }
-
-  return normalizeSessionName(session.id);
-}
-
-function normalizeSessionName(name: string): string {
-  return name.length > 12 ? `${name.slice(0, 12)}...` : name;
-}
-
-function workspaceSessionCount(workspace: SidebarWorkspace): number {
-  return Number.isFinite(workspace.sessionCount) ? Number(workspace.sessionCount) : (workspace.sessions || []).length;
-}
-
-function orderedWorkspaces(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
-  return applyStoredOrder(workspaces, readStoredList("pi.workspaceOrder"));
-}
-
-function orderedSessionTree(workspace: SidebarWorkspace): { session: SidebarSession; depth: number }[] {
-  const orders: Record<string, string[]> = readStoredObject("pi.sessionOrder");
-  const ordered: SidebarSession[] = applyStoredOrder(workspace.sessions || [], orders[workspace.id] || []);
-  const byParentId: Map<string, SidebarSession[]> = new Map();
-  const seenIds: Set<string> = new Set(ordered.map((session: SidebarSession): string => session.id));
-
-  for (const session of ordered) {
-    const parentId: string = session.parentId || "";
-    if (!parentId || !seenIds.has(parentId)) {
-      continue;
-    }
-
-    byParentId.set(parentId, [...byParentId.get(parentId) || [], session]);
-  }
-
-  const rows: { session: SidebarSession; depth: number }[] = [];
-  const visitedIds: Set<string> = new Set();
-  const appendSession = (session: SidebarSession, depth: number): void => {
-    if (visitedIds.has(session.id)) {
-      return;
-    }
-
-    visitedIds.add(session.id);
-    rows.push({ session, depth });
-    for (const child of byParentId.get(session.id) || []) {
-      appendSession(child, depth + 1);
-    }
-  };
-
-  for (const session of ordered) {
-    if (session.parentId && seenIds.has(session.parentId)) {
-      continue;
-    }
-
-    appendSession(session, 0);
-  }
-
-  for (const session of ordered) {
-    appendSession(session, 0);
-  }
-
-  return rows;
-}
-
-function applyStoredOrder<T extends { id: string }>(items: T[], order: string[]): T[] {
-  const positions: Map<string, number> = new Map(order.map((id: string, index: number): [string, number] => [id, index]));
-  return [...items].sort((left: T, right: T): number => {
-    const leftIndex: number | undefined = positions.get(left.id);
-    const rightIndex: number | undefined = positions.get(right.id);
-
-    if (leftIndex === undefined && rightIndex === undefined) {
-      return 0;
-    }
-
-    if (leftIndex === undefined) {
-      return 1;
-    }
-
-    if (rightIndex === undefined) {
-      return -1;
-    }
-
-    return leftIndex - rightIndex;
-  });
 }
 
 function sessionMenuId(sessionId: string): string {

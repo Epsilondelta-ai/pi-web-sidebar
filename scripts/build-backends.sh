@@ -16,7 +16,7 @@ for target in "${TARGETS[@]}"; do
   OUT="$OUT_DIR/pi-web-sidebar-backend"
   mkdir -p "$OUT_DIR"
   echo "building $GOOS/$GOARCH -> $OUT"
-  GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$OUT" "$ROOT/backend.go"
+  GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$OUT" "$ROOT"/backend*.go
   chmod 755 "$OUT"
 done
 

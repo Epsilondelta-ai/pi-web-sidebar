@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,6 +244,136 @@ func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
 	}
 	if _, ok := childSession["title"]; ok {
 		t.Fatalf("childSession = %v, want no legacy title", childSession)
+	}
+}
+
+func TestLoadWorkspaceCacheDecoratesTeamAgentSessions(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspace, ".pi", "sessions"), 0o755); err != nil {
+		t.Fatalf("create project sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".pi", "settings.json"), []byte(`{"sessionDir":".pi/sessions"}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	teamID := "019-team"
+	teamsRoot := filepath.Join(home, ".pi", "agent", "custom-teams")
+	teamDir := filepath.Join(teamsRoot, teamID)
+	teamSessionPath := filepath.Join(teamDir, "sessions", "worker.jsonl")
+	if err := os.MkdirAll(filepath.Dir(teamSessionPath), 0o755); err != nil {
+		t.Fatalf("create team session dir: %v", err)
+	}
+	teamSession := []byte(`{"type":"session","id":"team-child"}` + "\n")
+	if err := os.WriteFile(teamSessionPath, teamSession, 0o600); err != nil {
+		t.Fatalf("write team session: %v", err)
+	}
+	config := map[string]any{
+		"members": []any{
+			map[string]any{"name": "team-lead", "role": "lead"},
+			map[string]any{
+				"name":        "Emilia",
+				"role":        "worker",
+				"cwd":         workspace,
+				"sessionFile": teamSessionPath,
+				"meta":        map[string]any{"sessionName": "pi agent teams - teammate Emilia"},
+			},
+		},
+	}
+	configData, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(teamDir, "config.json"), configData, 0o600); err != nil {
+		t.Fatalf("write team config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(teamsRoot, "missing-config"), 0o755); err != nil {
+		t.Fatalf("create missing config team: %v", err)
+	}
+	badConfigDir := filepath.Join(teamsRoot, "bad-config")
+	if err := os.MkdirAll(badConfigDir, 0o755); err != nil {
+		t.Fatalf("create bad config team: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(badConfigDir, "config.json"), []byte(`{"members":`), 0o600); err != nil {
+		t.Fatalf("write bad team config: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_TEAMS_ROOT_DIR", " custom-teams ")
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
+	var teamSessionRecord map[string]any
+	for _, item := range sessions {
+		session := item.(map[string]any)
+		if session["id"] == "team-child" {
+			teamSessionRecord = session
+		}
+	}
+	if teamSessionRecord == nil {
+		t.Fatalf("sessions = %v, want team child", sessions)
+	}
+	if teamSessionRecord["parentId"] != teamID || teamSessionRecord["kind"] != "team agent" {
+		t.Fatalf("teamSessionRecord = %v, want decorated team agent child", teamSessionRecord)
+	}
+	if teamSessionRecord["name"] != "pi agent teams - teammate Emilia" {
+		t.Fatalf("teamSessionRecord name = %v, want teammate session name", teamSessionRecord["name"])
+	}
+}
+
+func TestLoadWorkspaceCacheDoesNotInferKindFromWorkspacePath(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "team-workspace")
+	sessionDir := filepath.Join(workspace, ".pi", "sessions")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("create project sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".pi", "settings.json"), []byte(`{"sessionDir":".pi/sessions"}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	projectSession := []byte(`{"id":"regular-session","name":"regular chat"}` + "\n")
+	if err := os.WriteFile(filepath.Join(sessionDir, "regular.jsonl"), projectSession, 0o600); err != nil {
+		t.Fatalf("write project session: %v", err)
+	}
+	promptSession := []byte(
+		`{"id":"prompt-session"}` + "\n" +
+			`{"message":{"role":"user","content":"please check whether subagent labels are wrong"}}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "prompt.jsonl"), promptSession, 0o600); err != nil {
+		t.Fatalf("write prompt session: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[{"id":"prompt-session","kind":"subagent","__sessionInfoName":"subagent cached"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %v, want regular sessions", sessions)
+	}
+	for _, item := range sessions {
+		session := item.(map[string]any)
+		if _, ok := session["kind"]; ok {
+			t.Fatalf("session = %v, want no inferred kind", item)
+		}
+		if _, ok := session["__sessionInfoName"]; ok {
+			t.Fatalf("session = %v, want no internal session info name", item)
+		}
 	}
 }
 
