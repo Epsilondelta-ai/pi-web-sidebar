@@ -1108,6 +1108,44 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='team'] .meta").textContent).toBe("team agent");
   });
 
+  test("external parent session deletion removes descendant rows", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "grandchild";
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "child", parentId: "parent", name: "child" },
+        { id: "grandchild", parentId: "child", name: "grandchild" },
+        { id: "sibling", name: "sibling" },
+      ],
+    }];
+    const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        sidebarEvents.push(event);
+      });
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    app.dispatchEvent(new window.CustomEvent("pi-web-sidebar:session-deleted", {
+      bubbles: true,
+      detail: { sessionId: "parent", workspaceId: "w1" },
+    }));
+
+    expect(app.querySelector("[data-session='parent']")).toBeFalsy();
+    expect(app.querySelector("[data-session='child']")).toBeFalsy();
+    expect(app.querySelector("[data-session='grandchild']")).toBeFalsy();
+    expect(app.querySelector("[data-session='sibling']")).toBeTruthy();
+    const activeEndEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
+      (event: import("./src/types").SidebarActionEvent): boolean => event.type === "active.end",
+    );
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(activeEndEvent?.detail?.sessionIds).toEqual(["parent", "child", "grandchild"]);
+  });
+
   test("session rows use active or inactive left indicators without waiting text", async () => {
     const app = setupApp();
     app.testWorkspaces = [{

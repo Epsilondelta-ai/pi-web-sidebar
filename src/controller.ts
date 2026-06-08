@@ -231,7 +231,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function applyActiveEnd(workspaceId: string, sessionId: string, sessionIds: string[] = []): void {
-    const deletedSessionIds: string[] = sessionIds.length > 0 ? sessionIds : [sessionId].filter(Boolean);
+    const requestedSessionIds: string[] = sessionIds.length > 0 ? sessionIds : [sessionId].filter(Boolean);
+    const deletedSessionIds: string[] = expandDeletedSessionIds(workspaces, workspaceId, requestedSessionIds);
     if (deletedSessionIds.length === 0) {
       return;
     }
@@ -716,6 +717,42 @@ function removeWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: str
     const sessions: SidebarSession[] = (workspace.sessions || []).filter((session): boolean => session.id !== sessionId);
     return { ...workspace, live: workspaceHasLiveSession(sessions), sessionCount: sessions.length, sessions };
   });
+}
+
+function expandDeletedSessionIds(workspaces: SidebarWorkspace[], workspaceId: string, sessionIds: string[]): string[] {
+  const deletedIds: string[] = [];
+  const seenIds: Set<string> = new Set();
+  const scopedWorkspaces: SidebarWorkspace[] = workspaceId
+    ? workspaces.filter((workspace: SidebarWorkspace): boolean => workspace.id === workspaceId)
+    : workspaces;
+
+  for (const sessionId of sessionIds) {
+    appendDeletedSessionId(sessionId, scopedWorkspaces, deletedIds, seenIds);
+  }
+
+  return deletedIds;
+}
+
+function appendDeletedSessionId(
+  sessionId: string,
+  workspaces: SidebarWorkspace[],
+  deletedIds: string[],
+  seenIds: Set<string>,
+): void {
+  if (!sessionId || seenIds.has(sessionId)) {
+    return;
+  }
+
+  seenIds.add(sessionId);
+  deletedIds.push(sessionId);
+
+  for (const workspace of workspaces) {
+    for (const session of workspace.sessions || []) {
+      if (session.parentId === sessionId) {
+        appendDeletedSessionId(session.id, workspaces, deletedIds, seenIds);
+      }
+    }
+  }
 }
 
 function mergeOptimisticSessions(
