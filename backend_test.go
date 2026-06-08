@@ -130,7 +130,8 @@ func TestLoadWorkspaceCacheAddsUncachedExistingSessions(t *testing.T) {
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("create session dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "external.jsonl"), []byte(`{"id":"external","title":"external chat","parentId":"parent"}`+"\n"), 0o600); err != nil {
+	externalSession := []byte(`{"id":"external","title":"external chat","parentId":"parent"}` + "\n")
+	if err := os.WriteFile(filepath.Join(sessionDir, "external.jsonl"), externalSession, 0o600); err != nil {
 		t.Fatalf("write session file: %v", err)
 	}
 

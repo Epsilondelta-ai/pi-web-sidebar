@@ -1000,10 +1000,12 @@ describe("pi-web-sidebar plugin", () => {
       app.workspaceList = app.testWorkspaces;
     };
     const backendCalls: BackendCallLog[] = [];
-    const context = testContext(app, { backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
-      backendCalls.push({ method, options });
-      return {};
-    } });
+    const context = testContext(app, {
+      backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+        backendCalls.push({ method, options });
+        return {};
+      },
+    });
     const controller = createSidebarController(app, context);
 
     controller.mount();
@@ -1015,13 +1017,19 @@ describe("pi-web-sidebar plugin", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(hostDeleteAllCalls).toBe(1);
-    expect(backendCalls.some((call) => call.method === "delete-workspace-sessions" && call.options.data?.workspaceId === "w1")).toBe(true);
+    const backendDeletedSessions: boolean = backendCalls.some((call: BackendCallLog): boolean => {
+      return call.method === "delete-workspace-sessions" && call.options.data?.workspaceId === "w1";
+    });
+    expect(backendDeletedSessions).toBe(true);
     expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "child"]);
     expect(deletedPayloads.at(-1)?.sessions).toEqual([
       { id: "s1", title: "new session" },
       { id: "child", parentId: "s1", title: "child" },
     ]);
-    expect(sidebarEvents.find((event) => event.type === "delete-workspace-sessions")?.detail?.sessionIds).toEqual(["s1", "child"]);
+    const clearEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
+      (event: import("./src/types").SidebarActionEvent): boolean => event.type === "delete-workspace-sessions",
+    );
+    expect(clearEvent?.detail?.sessionIds).toEqual(["s1", "child"]);
     expect(app.dataset.activeSessionId).toBe("");
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
