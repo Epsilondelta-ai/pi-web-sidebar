@@ -1,4 +1,5 @@
 import { FALLBACK_STYLE_ID, ICONS, PLUGIN_PANEL_ATTR } from "./constants";
+import { PLUGIN_STYLE_TEXT } from "./styles";
 import type { AppElement } from "./types";
 
 export function installFallbackDragStyles(): void {
@@ -8,133 +9,7 @@ export function installFallbackDragStyles(): void {
 
   const style: HTMLStyleElement = document.createElement("style");
   style.id = FALLBACK_STYLE_ID;
-  style.textContent = `
-    [data-pi-web-sidebar-plugin] {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 4px;
-      min-width: 0;
-      min-height: 0;
-      height: 100%;
-      overflow: hidden;
-    }
-    [data-pi-web-sidebar-plugin][hidden] {
-      display: none !important;
-    }
-    [data-pi-web-sidebar-plugin] .sidebar {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 0;
-      height: 100%;
-      overflow: hidden;
-    }
-    [data-pi-web-sidebar-plugin] .workspace-group,
-    [data-pi-web-sidebar-plugin] .session-row[data-session] {
-      min-width: 0;
-      transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
-    }
-    [data-pi-web-sidebar-plugin] .workspace-group > .sessions .session-row[data-session] {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 4px;
-      position: relative;
-      padding-left: calc(12px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
-    }
-    [data-pi-web-sidebar-plugin] .session-row.child-session::before {
-      content: "↳";
-      position: absolute;
-      left: calc(4px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
-      color: var(--fg-3, #6b7280);
-    }
-    [data-pi-web-sidebar-plugin] .session-row[data-session] .session-main {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      width: 100%;
-      min-width: 0;
-      border: 0;
-      background: transparent;
-      color: inherit;
-      text-align: left;
-    }
-    [data-pi-web-sidebar-plugin] .session-row[data-session] .title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    [data-pi-web-sidebar-plugin] .session-row[data-session] .meta {
-      flex: 0 0 auto;
-    }
-    [data-pi-web-sidebar-plugin] .session-row[data-session] .session-menu {
-      position: absolute;
-      top: 100%;
-      right: 0;
-      z-index: 10;
-    }
-    [data-pi-web-sidebar-plugin] .clear-sessions-row[data-action="delete-workspace-sessions"] {
-      display: flex !important;
-      align-items: center;
-      width: 100%;
-      border: 0;
-      border-radius: 8px;
-      padding: 6px 10px 6px 22px;
-      background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent) !important;
-      color: var(--danger, #ef4444) !important;
-      text-align: left;
-      cursor: pointer;
-    }
-    [data-pi-web-sidebar-plugin] .clear-sessions-row[data-action="delete-workspace-sessions"]:hover {
-      background: color-mix(in srgb, var(--danger, #ef4444) 18%, transparent) !important;
-    }
-    [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
-      display: none !important;
-    }
-    [data-pi-web-sidebar-plugin] .pi-web-sidebar-drag-source {
-      opacity: 0.45;
-    }
-    [data-pi-web-sidebar-plugin] .pi-web-sidebar-drop-target {
-      background: color-mix(in srgb, var(--accent, #7dd3fc) 12%, transparent);
-    }
-    [data-pi-web-sidebar-drag-handle] {
-      cursor: grab;
-    }
-    [data-pi-web-sidebar-plugin] .session-indicator {
-      flex: 0 0 auto;
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: var(--fg-3, #6b7280);
-    }
-    [data-pi-web-sidebar-plugin] .session-indicator.live {
-      background: var(--ok, #22c55e);
-    }
-    [data-pi-web-sidebar-drag-handle]:active {
-      cursor: grabbing;
-    }
-    .pi-web-sidebar-toggle {
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 auto;
-      min-width: 28px;
-      min-height: 28px;
-      cursor: pointer;
-      font: 18px/1 var(--font-mono, ui-monospace, monospace);
-    }
-    @media (max-width: 768px) {
-      [data-pi-web-sidebar-plugin]:not([hidden]) {
-        position: fixed;
-        inset: 0 auto 0 0;
-        z-index: 999;
-        width: min(86vw, 320px);
-        max-width: calc(100vw - 48px);
-      }
-      [data-pi-web-sidebar-plugin] .sb-resizer {
-        display: none;
-      }
-    }
-  `;
+  style.textContent = PLUGIN_STYLE_TEXT;
   document.head.append(style);
 }
 
@@ -194,12 +69,15 @@ export function createSidebar(): HTMLElement {
     '<div class="sb-section" style="flex:1;overflow-y:auto;min-height:0">',
     '<div class="sb-head"><span>workspaces</span><span class="sb-head-actions">',
     `<button class="add" type="button" data-pi-web-sidebar-action="open-workspace">${ICONS.plus} open</button>`,
-    `<button class="refresh" type="button" data-action="refresh-workspaces" title="refresh workspaces" aria-label="refresh workspaces">${ICONS.refresh}</button>`,
-    `<button class="sb-collapse" type="button" data-action="collapse-sidebar" title="collapse sidebar" aria-label="collapse sidebar">${ICONS.collapse}</button>`,
+    `<button class="refresh" type="button" data-action="refresh-workspaces" title="refresh workspaces" `
+      + `aria-label="refresh workspaces">${ICONS.refresh}</button>`,
+    `<button class="sb-collapse" type="button" data-action="collapse-sidebar" title="collapse sidebar" `
+      + `aria-label="collapse sidebar">${ICONS.collapse}</button>`,
     "</span></div>",
     "</div>",
     "</aside>",
-    '<div class="sb-resizer" role="separator" aria-orientation="vertical" aria-label="resize sidebar" title="drag to resize"></div>',
+    '<div class="sb-resizer" role="separator" aria-orientation="vertical" aria-label="resize sidebar" '
+      + 'title="drag to resize"></div>',
   ].join("");
   return wrap;
 }
