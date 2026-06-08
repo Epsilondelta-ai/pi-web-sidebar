@@ -1391,6 +1391,49 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle")).toBeTruthy();
   });
 
+  test("delete all sessions asks for confirmation before deleting", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [{ id: "s1", name: "new session" }],
+    }];
+    app.workspaceList = app.testWorkspaces;
+    const confirmMessages: string[] = [];
+    globalThis.confirm = (message?: string): boolean => {
+      confirmMessages.push(String(message || ""));
+      return false;
+    };
+    let hostDeleteAllCalls = 0;
+    app.deleteWorkspaceSessions = async (): Promise<void> => {
+      hostDeleteAllCalls += 1;
+    };
+    const backendCalls: BackendCallLog[] = [];
+    const context = testContext(app, {
+      backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+        backendCalls.push({ method, options });
+        return {};
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-action='delete-workspace-sessions']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(confirmMessages).toEqual([
+      "Warning: delete all 1 session in workspace w1? This removes local JSONL files and child sessions.",
+    ]);
+    expect(hostDeleteAllCalls).toBe(0);
+    expect(backendCalls.some((call: BackendCallLog): boolean => call.method === "delete-workspace-sessions")).toBe(false);
+    expect(app.dataset.activeSessionId).toBe("s1");
+    expect(app.querySelector("[data-session='s1']")).toBeTruthy();
+  });
+
   test("delete all sessions keeps sidebar shell", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";

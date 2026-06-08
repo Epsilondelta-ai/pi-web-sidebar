@@ -132,6 +132,11 @@ async function handleMutatingWorkspaceAction(
   if (action === "delete-workspace-sessions") {
     const workspaceId: string | undefined = target.dataset.workspace;
     const deletedSessions: SidebarSession[] = workspaceSessions(app, workspaceId || "");
+
+    if (!confirmDeleteWorkspaceSessions(workspaceId || "", deletedSessions)) {
+      return true;
+    }
+
     const requestedSessionIds: string[] = deletedSessions.map((session: SidebarSession): string => session.id);
     clearWorkspaceSessionSelection(app, workspaceId || "");
     clearWorkspaceSessionDom(app, workspaceId || "");
@@ -158,6 +163,16 @@ async function handleMutatingWorkspaceAction(
 
   return handleSessionAction(action, target, app, context, refreshWorkspaces, sidebarBridge);
 }
+
+function confirmDeleteWorkspaceSessions(workspaceId: string, sessions: SidebarSession[]): boolean {
+  const sessionCount: number = sessions.length;
+  const sessionLabel: string = sessionCount === 1 ? "1 session" : `${sessionCount} sessions`;
+  return confirm(
+    `Warning: delete all ${sessionLabel} in workspace ${workspaceId || "unknown"}? `
+      + "This removes local JSONL files and child sessions.",
+  );
+}
+
 async function deleteWorkspaceAction(
   target: HTMLElement,
   app: AppElement,
