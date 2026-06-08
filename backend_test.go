@@ -441,6 +441,58 @@ func TestDeleteSessionsRemovesChildSessionFiles(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionsRemovesDiscoveredNestedChildSessionFiles(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	parentDir := filepath.Join(sessionDir, "2026-06-08_parent")
+	childDir := filepath.Join(parentDir, "abcd1234", "run-0")
+	if err := os.MkdirAll(childDir, 0o700); err != nil {
+		t.Fatalf("create child dir: %v", err)
+	}
+	childFile := filepath.Join(childDir, "session.jsonl")
+	keepFile := filepath.Join(sessionDir, "keep.jsonl")
+	if err := os.WriteFile(childFile, []byte(`{"id":"child"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write child file: %v", err)
+	}
+	if err := os.WriteFile(keepFile, []byte(`{"id":"keep"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write keep file: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `"}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := deleteSessions("w1", []string{"parent"})
+	if err != nil {
+		t.Fatalf("deleteSessions error = %v", err)
+	}
+	deleted := result["deleted"].([]string)
+	if len(deleted) != 1 || deleted[0] != "child" {
+		t.Fatalf("deleted = %v, want child", deleted)
+	}
+	if _, err := os.Stat(childFile); !os.IsNotExist(err) {
+		t.Fatalf("child file still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Fatalf("keep file missing: %v", err)
+	}
+}
+
 func TestDeleteWorkspaceSessionsWithListRemovesOnlyListedSessionsAndChildren(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")

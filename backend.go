@@ -650,6 +650,7 @@ func sessionRecordsForSessionDir(sessionDir string) []map[string]any {
 		}
 
 		session := sessionRecordFromFile(path)
+		decorateSessionRecord(session, path, sessionDir)
 		if stringFromAny(session["id"]) != "" {
 			sessions = append(sessions, session)
 		}
