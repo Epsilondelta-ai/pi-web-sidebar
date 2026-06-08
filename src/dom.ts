@@ -39,7 +39,13 @@ export function installFallbackDragStyles(): void {
       align-items: center;
       gap: 4px;
       position: relative;
-      padding-left: 12px;
+      padding-left: calc(12px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
+    }
+    [data-pi-web-sidebar-plugin] .session-row.child-session::before {
+      content: "↳";
+      position: absolute;
+      left: calc(4px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
+      color: var(--fg-3, #6b7280);
     }
     [data-pi-web-sidebar-plugin] .session-row[data-session] .session-main {
       display: flex;
@@ -67,18 +73,20 @@ export function installFallbackDragStyles(): void {
       right: 0;
       z-index: 10;
     }
-    [data-pi-web-sidebar-plugin] .clear-sessions-row {
+    [data-pi-web-sidebar-plugin] .clear-sessions-row[data-action="delete-workspace-sessions"] {
+      display: flex !important;
+      align-items: center;
       width: 100%;
       border: 0;
       border-radius: 8px;
       padding: 6px 10px 6px 22px;
-      background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
-      color: var(--danger, #ef4444);
+      background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent) !important;
+      color: var(--danger, #ef4444) !important;
       text-align: left;
       cursor: pointer;
     }
-    [data-pi-web-sidebar-plugin] .clear-sessions-row:hover {
-      background: color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
+    [data-pi-web-sidebar-plugin] .clear-sessions-row[data-action="delete-workspace-sessions"]:hover {
+      background: color-mix(in srgb, var(--danger, #ef4444) 18%, transparent) !important;
     }
     [data-pi-web-sidebar-plugin].pi-web-sidebar-dragging-workspace .workspace-group > .sessions {
       display: none !important;

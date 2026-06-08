@@ -63,8 +63,10 @@ func main() {
 		result, err = loadWorkspaceCache()
 	case "save-workspace-cache":
 		result, err = saveWorkspaceCache(data)
+	case "validate-workspaces":
+		result, err = validateWorkspaces(data)
 	case "delete-workspace-sessions":
-		result, err = deleteWorkspaceSessions(stringInput(data, "workspaceId"))
+		result, err = deleteWorkspaceSessions(stringInput(data, "workspaceId"), stringListInput(data, "sessionIds"))
 	case "delete-sessions":
 		result, err = deleteSessions(stringInput(data, "workspaceId"), stringListInput(data, "sessionIds"))
 	case "pi-status":
@@ -299,25 +301,38 @@ func validateWorkspaceCache(cache request) request {
 		}
 
 		workspacePath := strings.TrimSpace(stringFromAny(workspace["path"]))
-		sessions, ok := workspace["sessions"].([]any)
-		if workspacePath == "" || !ok || len(sessions) == 0 {
+		if workspacePath == "" {
 			validated = append(validated, workspace)
 			continue
 		}
 
-		validSessionIDs := sessionIDsForWorkspacePath(workspacePath)
-		if validSessionIDs == nil {
+		validSessions := sessionRecordsForWorkspacePath(workspacePath)
+		if validSessions == nil {
 			validated = append(validated, workspace)
 			continue
 		}
 
-		filteredSessions := make([]any, 0, len(sessions))
+		sessions, _ := workspace["sessions"].([]any)
+		filteredSessions := make([]any, 0, len(sessions)+len(validSessions))
+		seenIDs := map[string]bool{}
 		for _, sessionItem := range sessions {
 			session, ok := sessionItem.(map[string]any)
 			if !ok {
 				continue
 			}
-			if validSessionIDs[stringFromAny(session["id"])] {
+
+			sessionID := stringFromAny(session["id"])
+			if validSessions[sessionID] == nil {
+				continue
+			}
+
+			filteredSessions = append(filteredSessions, session)
+			seenIDs[sessionID] = true
+		}
+
+		for _, session := range sortedSessionRecords(validSessions) {
+			sessionID := stringFromAny(session["id"])
+			if !seenIDs[sessionID] {
 				filteredSessions = append(filteredSessions, session)
 			}
 		}
@@ -332,7 +347,7 @@ func validateWorkspaceCache(cache request) request {
 	return cache
 }
 
-func sessionIDsForWorkspacePath(workspacePath string) map[string]bool {
+func sessionRecordsForWorkspacePath(workspacePath string) map[string]map[string]any {
 	cleanWorkspacePath, err := cleanPath(workspacePath)
 	if err != nil {
 		return nil
@@ -343,49 +358,169 @@ func sessionIDsForWorkspacePath(workspacePath string) map[string]bool {
 		return nil
 	}
 
-	ids := map[string]bool{}
+	sessions := syntheticParentSessions(sessionDir)
 	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
 
-		id := sessionIDFromFile(path)
+		session := sessionRecordFromFile(path)
+		decorateSessionRecord(session, path, sessionDir)
+		id := stringFromAny(session["id"])
 		if id != "" {
-			ids[id] = true
+			sessions[id] = session
 		}
 		return nil
 	}); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return ids
+			return sessions
 		}
 		return nil
 	}
-	return ids
+	return sessions
+}
+
+func syntheticParentSessions(sessionDir string) map[string]map[string]any {
+	sessions := map[string]map[string]any{}
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		return sessions
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		id := sessionIDFromSessionFileName(entry.Name())
+		if id != "" {
+			sessions[id] = map[string]any{"id": id, "title": id}
+		}
+	}
+	return sessions
+}
+
+func sortedSessionRecords(sessions map[string]map[string]any) []map[string]any {
+	ids := make([]string, 0, len(sessions))
+	for id := range sessions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		records = append(records, sessions[id])
+	}
+	return records
 }
 
 func sessionIDFromFile(path string) string {
+	return stringFromAny(sessionRecordFromFile(path)["id"])
+}
+
+func sessionRecordFromFile(path string) map[string]any {
 	file, err := os.Open(path)
 	if err != nil {
-		return ""
+		return map[string]any{}
 	}
 	defer file.Close()
 
 	decoder := json.NewDecoder(file)
 	var header map[string]any
 	if err := decoder.Decode(&header); err != nil {
+		return map[string]any{}
+	}
+
+	for i := 0; i < 12; i++ {
+		var event map[string]any
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		if event["type"] == "session_info" {
+			mergeSessionInfo(header, event)
+		}
+	}
+	return header
+}
+
+func mergeSessionInfo(session map[string]any, info map[string]any) {
+	name := strings.TrimSpace(stringFromAny(info["name"]))
+	if name != "" && strings.TrimSpace(stringFromAny(session["title"])) == "" {
+		session["title"] = name
+	}
+	if name != "" && strings.TrimSpace(stringFromAny(session["name"])) == "" {
+		session["name"] = name
+	}
+}
+
+func decorateSessionRecord(session map[string]any, path string, sessionDir string) {
+	relativePath, err := filepath.Rel(sessionDir, path)
+	if err == nil {
+		parts := strings.Split(filepath.ToSlash(relativePath), "/")
+		if len(parts) > 1 {
+			parentID := sessionIDFromSessionFileName(parts[0])
+			if parentID != "" {
+				session["parentId"] = parentID
+			}
+		}
+	}
+
+	kind := sessionKind(session, path)
+	if kind != "" {
+		session["kind"] = kind
+	}
+}
+
+func sessionIDFromSessionFileName(name string) string {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	index := strings.LastIndex(base, "_")
+	if index < 0 || index == len(base)-1 {
 		return ""
 	}
-	return stringFromAny(header["id"])
+	return base[index+1:]
+}
+
+func sessionKind(session map[string]any, path string) string {
+	text := strings.ToLower(strings.Join([]string{
+		path,
+		stringFromAny(session["kind"]),
+		stringFromAny(session["title"]),
+		stringFromAny(session["name"]),
+		stringFromAny(session["agent"]),
+		stringFromAny(session["agentName"]),
+		stringFromAny(session["teammate"]),
+		stringFromAny(session["role"]),
+		stringFromAny(session["source"]),
+	}, " "))
+	if strings.Contains(text, "team") || strings.Contains(text, "teammate") {
+		return "team agent"
+	}
+	if strings.Contains(text, "subagent") || strings.Contains(filepath.ToSlash(path), "/run-") {
+		return "subagent"
+	}
+	return ""
 }
 
 func workspaceHasLiveSession(sessions []any) bool {
 	for _, sessionItem := range sessions {
 		session, ok := sessionItem.(map[string]any)
-		if ok && (session["live"] == true || session["active"] == true) {
+		if !ok {
+			continue
+		}
+
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(session["status"])))
+		if session["unreadCompleted"] == true || completedStatus(status) {
+			continue
+		}
+		if session["live"] == true || activeStatus(status) {
 			return true
 		}
 	}
 	return false
+}
+
+func validateWorkspaces(data request) (request, error) {
+	return validateWorkspaceCache(request{"workspaces": data["workspaces"]}), nil
 }
 
 func saveWorkspaceCache(data request) (request, error) {
@@ -397,7 +532,7 @@ func saveWorkspaceCache(data request) (request, error) {
 		return request{}, err
 	}
 
-	payload := request{"workspaces": data["workspaces"]}
+	payload := validateWorkspaceCache(request{"workspaces": data["workspaces"]})
 	encoded, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return request{}, err
@@ -424,33 +559,16 @@ func deleteSessions(workspaceID string, sessionIDs []string) (request, error) {
 		return request{}, errors.New("session dir is empty")
 	}
 
-	deleteSet := map[string]bool{}
-	for _, sessionID := range sessionIDs {
-		deleteSet[sessionID] = true
-	}
-
-	deleted := []string{}
-	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
-			return nil
-		}
-		id := sessionIDFromFile(path)
-		if !deleteSet[id] {
-			return nil
-		}
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-		deleted = append(deleted, id)
-		return nil
-	}); err != nil && !errors.Is(err, os.ErrNotExist) {
+	deleteSet := expandSessionDeleteSet(sessionDir, sessionIDs)
+	deleted, err := removeSessionFiles(sessionDir, deleteSet)
+	if err != nil {
 		return request{}, err
 	}
 
 	return request{"deleted": deleted, "workspaceId": workspaceID}, nil
 }
 
-func deleteWorkspaceSessions(workspaceID string) (request, error) {
+func deleteWorkspaceSessions(workspaceID string, sessionIDs []string) (request, error) {
 	workspacePath, err := workspacePathFromCache(workspaceID)
 	if err != nil {
 		return request{}, err
@@ -460,11 +578,131 @@ func deleteWorkspaceSessions(workspaceID string) (request, error) {
 	if sessionDir == "" {
 		return request{}, errors.New("session dir is empty")
 	}
+
+	if len(sessionIDs) > 0 {
+		deleteSet := expandSessionDeleteSet(sessionDir, sessionIDs)
+		deleted, err := removeSessionFiles(sessionDir, deleteSet)
+		if err != nil {
+			return request{}, err
+		}
+		return request{"deleted": deleted, "path": sessionDir, "workspaceId": workspaceID}, nil
+	}
+
 	if err := os.RemoveAll(sessionDir); err != nil {
 		return request{}, err
 	}
 
 	return request{"deleted": true, "path": sessionDir, "workspaceId": workspaceID}, nil
+}
+
+func expandSessionDeleteSet(sessionDir string, sessionIDs []string) map[string]bool {
+	deleteSet := map[string]bool{}
+	for _, sessionID := range sessionIDs {
+		deleteSet[sessionID] = true
+	}
+
+	for {
+		added := false
+		for _, session := range sessionRecordsForSessionDir(sessionDir) {
+			id := stringFromAny(session["id"])
+			parentID := stringFromAny(session["parentId"])
+			if id == "" || parentID == "" || !deleteSet[parentID] || deleteSet[id] {
+				continue
+			}
+			deleteSet[id] = true
+			added = true
+		}
+		if !added {
+			return deleteSet
+		}
+	}
+}
+
+func removeSessionFiles(sessionDir string, deleteSet map[string]bool) ([]string, error) {
+	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+
+		id := sessionIDFromFile(path)
+		if !deleteSet[id] {
+			return nil
+		}
+
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	if err := removeSyntheticSessionDirs(sessionDir, deleteSet); err != nil {
+		return nil, err
+	}
+
+	return sortedDeletedSessionIDs(deleteSet), nil
+}
+
+func removeSyntheticSessionDirs(sessionDir string, deleteSet map[string]bool) error {
+	entries, err := os.ReadDir(sessionDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		id := sessionIDFromSessionFileName(entry.Name())
+		if id == "" || !deleteSet[id] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(sessionDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sortedDeletedSessionIDs(deleteSet map[string]bool) []string {
+	ids := make([]string, 0, len(deleteSet))
+	for id := range deleteSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func sessionRecordsForSessionDir(sessionDir string) []map[string]any {
+	sessions := []map[string]any{}
+	if err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+
+		session := sessionRecordFromFile(path)
+		decorateSessionRecord(session, path, sessionDir)
+		if stringFromAny(session["id"]) != "" {
+			sessions = append(sessions, session)
+		}
+		return nil
+	}); err != nil {
+		return []map[string]any{}
+	}
+	return sessions
+}
+
+func completedStatus(status string) bool {
+	return status == "complete" || status == "completed" || status == "done" || status == "failed" || status == "success"
+}
+
+func activeStatus(status string) bool {
+	return status == "active" || status == "live" || status == "running" || status == "thinking"
 }
 
 func workspacePathFromCache(workspaceID string) (string, error) {
@@ -500,13 +738,57 @@ func stringFromAny(value any) string {
 }
 
 func piSessionDirForCWD(cwd string) string {
+	if root := os.Getenv("PI_CODING_AGENT_SESSION_DIR"); root != "" {
+		return cwdScopedSessionDir(root, cwd)
+	}
+
+	if sessionDir := projectSessionDir(cwd); sessionDir != "" {
+		return sessionDir
+	}
+
 	root := defaultPiSessionDir()
 	if root == "" {
 		return ""
 	}
 
+	return cwdScopedSessionDir(root, cwd)
+}
+
+func cwdScopedSessionDir(root string, cwd string) string {
 	safePath := "--" + strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(strings.TrimLeft(cwd, "/\\")) + "--"
 	return filepath.Join(root, safePath)
+}
+
+func projectSessionDir(cwd string) string {
+	settingsPath := filepath.Join(cwd, ".pi", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return ""
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return ""
+	}
+
+	sessionDir := strings.TrimSpace(stringFromAny(settings["sessionDir"]))
+	if sessionDir == "" {
+		return ""
+	}
+	if sessionDir == "~" || strings.HasPrefix(sessionDir, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		if sessionDir == "~" {
+			return filepath.Clean(home)
+		}
+		return filepath.Clean(filepath.Join(home, strings.TrimPrefix(sessionDir, "~/")))
+	}
+	if filepath.IsAbs(sessionDir) {
+		return filepath.Clean(sessionDir)
+	}
+	return filepath.Clean(filepath.Join(cwd, sessionDir))
 }
 
 func defaultPiSessionDir() string {

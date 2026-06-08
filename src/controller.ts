@@ -200,11 +200,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
     };
     workspaces = upsertWorkspaceSession(workspaces, workspaceId, session);
-    app.dataset.activeSessionId = sessionId;
-    app.dataset.activeWorkspaceId = workspaceId;
     app.sidebarOpenWorkspaceId = workspaceId;
-    storePersistedSelection(sessionId, workspaceId);
-    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", sessionId).next(sessionId);
     renderCurrentWorkspaces();
     sidebarBridge.emitEvent("session.created", { sessionId, workspaceId });
     sidebarBridge.emitState("session.created");
@@ -375,11 +371,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       const refreshedWorkspaces: SidebarWorkspace[] = options.emptySessionsForWorkspaceId
         ? withoutWorkspaceSessions(nextWorkspaces, app, options.emptySessionsForWorkspaceId)
         : nextWorkspaces;
-      workspaces = clearWorkspaceSessionsById(
-        mergeOptimisticSessions(refreshedWorkspaces, optimisticSessionsByWorkspace),
-        clearedSessionWorkspaceIds,
-        app,
-      );
+      optimisticSessionsByWorkspace = removeMissingOptimisticSessions(optimisticSessionsByWorkspace, refreshedWorkspaces);
+      workspaces = clearWorkspaceSessionsById(refreshedWorkspaces, clearedSessionWorkspaceIds, app);
       if (clearedSessionWorkspaceIds.size > 0) {
         persistWorkspaceCache(workspaces);
       }
@@ -692,6 +685,30 @@ function mergeOptimisticSessions(
   });
 }
 
+function removeMissingOptimisticSessions(
+  optimisticSessionsByWorkspace: Record<string, SidebarSession[]>,
+  workspaces: SidebarWorkspace[],
+): Record<string, SidebarSession[]> {
+  const existingSessionIds: Set<string> = new Set(
+    workspaces.flatMap((workspace: SidebarWorkspace): string[] => {
+      return (workspace.sessions || []).map((session: SidebarSession): string => session.id);
+    }),
+  );
+  const next: Record<string, SidebarSession[]> = {};
+
+  for (const [workspaceId, sessions] of Object.entries(optimisticSessionsByWorkspace)) {
+    const remainingSessions: SidebarSession[] = sessions.filter((session: SidebarSession): boolean => {
+      return existingSessionIds.has(session.id);
+    });
+
+    if (remainingSessions.length > 0) {
+      next[workspaceId] = remainingSessions;
+    }
+  }
+
+  return next;
+}
+
 function removeOptimisticSession(
   optimisticSessionsByWorkspace: Record<string, SidebarSession[]>,
   sessionId: string,
@@ -723,7 +740,7 @@ function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
       return false;
     }
 
-    return !!(session.active || session.live || ["active", "live", "running", "thinking"].includes(status));
+    return !!(session.live || ["active", "live", "running", "thinking"].includes(status));
   });
 }
 

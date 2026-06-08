@@ -6,18 +6,14 @@ export async function loadWorkspaces(context: PluginContext, app: AppElement): P
   const directWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
 
   if (directWorkspaces.length > 0) {
-    storeWorkspaceCache(directWorkspaces);
-    saveWorkspaceCacheInBackground(context, directWorkspaces);
-    return directWorkspaces;
+    return validateAndStoreWorkspaces(context, directWorkspaces);
   }
 
   const cachedWorkspaces: SidebarWorkspace[] = await loadWorkspaceCache(context);
   const latestDirectWorkspaces: SidebarWorkspace[] = directWorkspaceList(context, app);
 
   if (latestDirectWorkspaces.length > 0) {
-    storeWorkspaceCache(latestDirectWorkspaces);
-    saveWorkspaceCacheInBackground(context, latestDirectWorkspaces);
-    return latestDirectWorkspaces;
+    return validateAndStoreWorkspaces(context, latestDirectWorkspaces);
   }
 
   return cachedWorkspaces.length > 0 ? cachedWorkspaces : directWorkspaces;
@@ -42,14 +38,21 @@ export async function createWorkspaceSession(app: AppElement, workspaceId?: stri
 export async function deleteWorkspaceSessionList(
   app: AppElement,
   context: PluginContext,
-  workspaceId?: string,
-): Promise<void> {
+  workspaceId: string | undefined,
+  sessionIds: string[],
+): Promise<string[]> {
   if (!workspaceId) {
-    return;
+    return [];
+  }
+
+  const result: unknown = await context.backend?.("delete-workspace-sessions", { data: { sessionIds, workspaceId } });
+  if (isRecord(result) && Array.isArray(result.deleted)) {
+    const deletedSessionIds: string[] = result.deleted.filter((sessionId: unknown): sessionId is string => typeof sessionId === "string");
+    return deletedSessionIds.length > 0 ? deletedSessionIds : sessionIds;
   }
 
   await app.deleteWorkspaceSessions?.(workspaceId);
-  await context.backend?.("delete-workspace-sessions", { data: { workspaceId } });
+  return sessionIds;
 }
 
 export async function deleteSessionList(
@@ -57,12 +60,18 @@ export async function deleteSessionList(
   context: PluginContext,
   workspaceId: string,
   sessionIds: string[],
-): Promise<void> {
-  for (const sessionId of sessionIds) {
+): Promise<string[]> {
+  const result: unknown = await context.backend?.("delete-sessions", { data: { sessionIds, workspaceId } });
+  const backendDeletedSessionIds: string[] = isRecord(result) && Array.isArray(result.deleted)
+    ? result.deleted.filter((sessionId: unknown): sessionId is string => typeof sessionId === "string")
+    : [];
+  const deletedSessionIds: string[] = backendDeletedSessionIds.length > 0 ? backendDeletedSessionIds : sessionIds;
+
+  for (const sessionId of deletedSessionIds) {
     await app.deleteSession?.(sessionId);
   }
 
-  await context.backend?.("delete-sessions", { data: { sessionIds, workspaceId } });
+  return deletedSessionIds;
 }
 
 export async function renameSessionById(app: AppElement, sessionId: string): Promise<SessionRenameResponse> {
@@ -155,6 +164,27 @@ export async function saveWorkspaceCache(context: PluginContext, workspaces: Sid
   }
 
   await context.backend?.("save-workspace-cache", { data: { workspaces } });
+}
+
+async function validateAndStoreWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
+  const validatedWorkspaces: SidebarWorkspace[] = await validateWorkspaces(context, workspaces);
+  storeWorkspaceCache(validatedWorkspaces);
+  saveWorkspaceCacheInBackground(context, validatedWorkspaces);
+  return validatedWorkspaces;
+}
+
+async function validateWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
+  try {
+    const result: unknown = await context.backend?.("validate-workspaces", { data: { workspaces } });
+
+    if (isRecord(result) && Array.isArray(result.workspaces)) {
+      return result.workspaces.filter(isSidebarWorkspace);
+    }
+  } catch {
+    return workspaces;
+  }
+
+  return workspaces;
 }
 
 function saveWorkspaceCacheInBackground(context: PluginContext, workspaces: SidebarWorkspace[]): void {

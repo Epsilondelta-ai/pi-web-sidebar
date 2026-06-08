@@ -118,6 +118,10 @@ function testContext(app: TestApp, overrides: Partial<TestContext> = {}): TestCo
         return { path: "~/.pi-web/pi-web-sidebar/workspaces.json" };
       }
 
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
       if (method === "pi-status") {
         return { available: true, checkedAt: "2026-06-07T00:00:00.000Z", executable: "/bin/pi", version: "pi test" };
       }
@@ -514,7 +518,11 @@ describe("pi-web-sidebar plugin", () => {
   test("loadWorkspaces returns direct workspace state without waiting for cache save", async () => {
     const app = setupApp();
     const saveDeferred = deferred<unknown>();
-    const context = testContext(app, { backend: async (method) => {
+    const context = testContext(app, { backend: async (method, options) => {
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
       if (method === "save-workspace-cache") {
         return saveDeferred.promise;
       }
@@ -524,12 +532,36 @@ describe("pi-web-sidebar plugin", () => {
 
     const workspaces = await Promise.race([
       loadWorkspaces(context, app),
-      Promise.resolve().then((): string => "save-blocked"),
+      new Promise((resolve: (value: string) => void): void => { setTimeout((): void => resolve("save-blocked"), 20); }),
     ]);
 
     expect(workspaces).toEqual(app.testWorkspaces);
     expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("w1");
     saveDeferred.resolve({});
+  });
+
+  test("loadWorkspaces validates direct workspaces and removes stale local cache", async () => {
+    const app = setupApp();
+    const validatedWorkspaces: SidebarWorkspace[] = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "real" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "stale", active: true }] }];
+    app.workspaceList = app.testWorkspaces;
+    const context = testContext(app, { backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+      if (method === "validate-workspaces") {
+        expect(options.data?.workspaces).toEqual(app.testWorkspaces);
+        return { workspaces: validatedWorkspaces };
+      }
+
+      if (method === "save-workspace-cache") {
+        expect(options.data?.workspaces).toEqual(validatedWorkspaces);
+        return {};
+      }
+
+      return {};
+    } });
+
+    expect(await loadWorkspaces(context, app)).toEqual(validatedWorkspaces);
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toContain("real");
+    expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).not.toContain("stale");
   });
 
   test("loadWorkspaces uses backend-validated cache before local stale cache", async () => {
@@ -813,6 +845,30 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
   });
 
+  test("session rows render subagent and team agent tree badges", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", title: "parent" },
+        { id: "sub", parentId: "parent", title: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "parent", title: "team worker", kind: "team agent" },
+      ],
+    }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+
+    const rows: HTMLElement[] = [...app.querySelectorAll<HTMLElement>("[data-workspace-group='w1'] .session-row[data-session]")];
+    expect(rows.map((row: HTMLElement): string => row.dataset.session || "")).toEqual(["parent", "sub", "team"]);
+    expect(requireElement<HTMLElement>(app, "[data-session='sub']").dataset.depth).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='team']").dataset.depth).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='sub'] .meta").textContent).toBe("subagent");
+    expect(requireElement<HTMLElement>(app, "[data-session='team'] .meta").textContent).toBe("team agent");
+  });
+
   test("session rows use active or inactive left indicators without waiting text", async () => {
     const app = setupApp();
     app.testWorkspaces = [{
@@ -832,7 +888,9 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
     expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
-    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .session-indicator").title).toBe("session inactive");
     expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .meta").hidden).toBe(true);
     expect(app.querySelector("[data-session='completed'] .session-indicator.idle")).toBeTruthy();
     expect(app.querySelector("[data-session='completed'] .session-indicator.live")).toBeFalsy();
@@ -878,7 +936,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(sidebarStyle).toContain(".session-row[data-session]");
     expect(sidebarStyle).toContain(".session-row[data-session] .session-main");
     expect(sidebarStyle).toContain("text-overflow: ellipsis");
-    expect(sidebarStyle).toContain("padding-left: 12px");
+    expect(sidebarStyle).toContain("--pi-web-sidebar-session-depth");
+    expect(sidebarStyle).toContain(".session-row.child-session::before");
     expect(sidebarStyle).toContain(".clear-sessions-row");
   });
 
@@ -908,6 +967,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(hostNewSessionClicks).toBe(0);
     expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
+    expect(app.querySelector("[data-session='s1'].active")).toBeFalsy();
+    expect(app.dataset.activeSessionId || "").toBe("");
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
@@ -976,7 +1037,12 @@ describe("pi-web-sidebar plugin", () => {
   test("delete all sessions keeps sidebar shell", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [{ id: "s1", title: "new session" }, { id: "child", parentId: "s1", title: "child" }],
+    }];
     app.workspaceList = app.testWorkspaces;
     const deletedPayloads: Record<string, unknown>[] = [];
     const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
@@ -992,7 +1058,14 @@ describe("pi-web-sidebar plugin", () => {
       app.testWorkspaces = [{ id: workspaceId, name: "one", path: "/one", sessions: [] }];
       app.workspaceList = app.testWorkspaces;
     };
-    const controller = createSidebarController(app, testContext(app));
+    const backendCalls: BackendCallLog[] = [];
+    const context = testContext(app, {
+      backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+        backendCalls.push({ method, options });
+        return {};
+      },
+    });
+    const controller = createSidebarController(app, context);
 
     controller.mount();
     expect(requireElement<HTMLElement>(app, ".clear-sessions-row").classList.contains("danger")).toBe(true);
@@ -1003,11 +1076,25 @@ describe("pi-web-sidebar plugin", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(hostDeleteAllCalls).toBe(1);
-    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1"]);
-    expect(sidebarEvents.find((event) => event.type === "delete-workspace-sessions")?.detail?.sessionIds).toEqual(["s1"]);
+    const backendDeletedSessions: boolean = backendCalls.some((call: BackendCallLog): boolean => {
+      return call.method === "delete-workspace-sessions"
+        && call.options.data?.workspaceId === "w1"
+        && JSON.stringify(call.options.data?.sessionIds) === JSON.stringify(["s1", "child"]);
+    });
+    expect(backendDeletedSessions).toBe(true);
+    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "child"]);
+    expect(deletedPayloads.at(-1)?.sessions).toEqual([
+      { id: "s1", title: "new session" },
+      { id: "child", parentId: "s1", title: "child" },
+    ]);
+    const clearEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
+      (event: import("./src/types").SidebarActionEvent): boolean => event.type === "delete-workspace-sessions",
+    );
+    expect(clearEvent?.detail?.sessionIds).toEqual(["s1", "child"]);
     expect(app.dataset.activeSessionId).toBe("");
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
+    expect(app.querySelector("[data-session='child']")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
 
@@ -1016,6 +1103,70 @@ describe("pi-web-sidebar plugin", () => {
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", title: "future" }] }];
     await controller.refresh();
     expect(app.querySelector("[data-session='s2']")).toBeTruthy();
+  });
+
+  test("delete all sessions publishes active end for every requested id when backend deleted list is empty", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "optimistic", title: "New chat" }] }];
+    app.workspaceList = app.testWorkspaces;
+    const activeEndPayloads: Record<string, unknown>[] = [];
+    const context = testContext(app, {
+      backend: async (method: string): Promise<unknown> => {
+        if (method === "delete-workspace-sessions") {
+          return { deleted: [] };
+        }
+
+        return {};
+      },
+      events: {
+        publish: async (_channel: string, type: string, payload: unknown): Promise<unknown> => {
+          if (type === "active.end") {
+            activeEndPayloads.push(payload as Record<string, unknown>);
+          }
+
+          return {};
+        },
+        subscribe: (): (() => void) => (): void => {},
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-action='delete-workspace-sessions']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(activeEndPayloads.at(-1)?.sessionIds).toEqual(["optimistic"]);
+  });
+
+  test("delete all sessions publishes backend-expanded deleted ids", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", title: "new session" }] }];
+    app.workspaceList = app.testWorkspaces;
+    const deletedPayloads: Record<string, unknown>[] = [];
+    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+      deletedPayloads.push(payload);
+    });
+    const context = testContext(app, {
+      backend: async (method: string): Promise<unknown> => {
+        if (method === "delete-workspace-sessions") {
+          return { deleted: ["s1", "hidden-child"] };
+        }
+
+        return {};
+      },
+    });
+    const controller = createSidebarController(app, context);
+
+    controller.mount();
+    requireElement(app, "[data-action='delete-workspace-sessions']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(deletedPayloads.at(-1)?.sessionIds).toEqual(["s1", "hidden-child"]);
+    expect(deletedPayloads.at(-1)?.sessions).toEqual([{ id: "s1", title: "new session" }, { id: "hidden-child" }]);
   });
 
   test("session menu delete is handled by plugin without blanking sidebar", async () => {
