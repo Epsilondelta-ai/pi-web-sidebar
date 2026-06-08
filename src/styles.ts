@@ -122,7 +122,12 @@ export const PLUGIN_STYLE_TEXT: string = `
     color: var(--pi-web-sidebar-fg);
   }
 
-  [data-pi-web-sidebar-plugin] .ws-row.open,
+  [data-pi-web-sidebar-plugin] .ws-row.open {
+    border-color: var(--pi-web-sidebar-border-dim);
+    background: color-mix(in srgb, var(--pi-web-sidebar-bg-hover) 35%, transparent);
+    color: var(--pi-web-sidebar-fg);
+  }
+
   [data-pi-web-sidebar-plugin] .ws-row.active,
   [data-pi-web-sidebar-plugin] .session-row.active,
   [data-pi-web-sidebar-plugin] .session-row.selected {
@@ -154,7 +159,6 @@ export const PLUGIN_STYLE_TEXT: string = `
   }
 
   [data-pi-web-sidebar-plugin] .dot.live,
-  [data-pi-web-sidebar-plugin] .has-active-session > .workspace-shell .dot,
   [data-pi-web-sidebar-plugin] .session-indicator.live {
     background: var(--pi-web-sidebar-ok);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--pi-web-sidebar-ok) 18%, transparent);
