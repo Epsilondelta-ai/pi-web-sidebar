@@ -28,6 +28,14 @@ export function animateMovedSiblings(elements: HTMLElement[], before: Map<HTMLEl
   });
 }
 
+export function canMoveSessionNear(source: HTMLElement, target: HTMLElement): boolean {
+  return source.dataset.workspace === target.dataset.workspace && sessionParentId(source) === sessionParentId(target);
+}
+
+function sessionParentId(row: HTMLElement): string {
+  return row.dataset.parentSession || "";
+}
+
 function animateMovedElement(element: HTMLElement, delta: number): void {
   if (typeof element.animate === "function") {
     element.animate([

@@ -1518,6 +1518,69 @@ describe("pi-web-sidebar plugin", () => {
     expect(JSON.parse(localStorage.getItem("pi.sessionOrder") || "{}")).toEqual({ w1: ["s2", "s1"] });
   });
 
+  test("fallback drag keeps subagent and team agent sessions inside their parent session", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "parent", name: "team worker", kind: "team agent" },
+        { id: "other", name: "other parent" },
+      ],
+    }];
+    app.sidebarOpenWorkspaceId = "w1";
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    const pluginSidebar = requireElement(app, "[data-pi-web-sidebar-plugin]");
+    const subHandle = requireElement(app, "[data-session='sub'] .session-drag-handle");
+    const otherParent = requireElement<HTMLElement>(app, "[data-session='other']");
+    otherParent.getBoundingClientRect = (): DOMRect => ({
+      bottom: 0,
+      height: 10,
+      left: 0,
+      right: 0,
+      top: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: (): Record<string, number> => ({}),
+    });
+
+    subHandle.dispatchEvent(dragEvent("dragstart"));
+    otherParent.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
+
+    const sessionOrderAfterBlockedDrag: string[] = [...app.querySelectorAll<HTMLElement>(
+      "[data-workspace-group='w1'] .session-row[data-session]",
+    )].map((row: HTMLElement): string => row.dataset.session || "");
+    expect(sessionOrderAfterBlockedDrag).toEqual(["parent", "sub", "team", "other"]);
+    expect(localStorage.getItem("pi.sessionOrder")).toBeNull();
+
+    const teamRow = requireElement<HTMLElement>(app, "[data-session='team']");
+    teamRow.getBoundingClientRect = (): DOMRect => ({
+      bottom: 0,
+      height: 10,
+      left: 0,
+      right: 0,
+      top: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: (): Record<string, number> => ({}),
+    });
+    teamRow.dispatchEvent(dragEvent("dragover", { clientY: 9 }));
+    pluginSidebar.dispatchEvent(dragEvent("drop"));
+
+    const sessionOrderAfterSiblingDrag: string[] = [...app.querySelectorAll<HTMLElement>(
+      "[data-workspace-group='w1'] .session-row[data-session]",
+    )].map((row: HTMLElement): string => row.dataset.session || "");
+    expect(sessionOrderAfterSiblingDrag).toEqual(["parent", "team", "sub", "other"]);
+    expect(JSON.parse(localStorage.getItem("pi.sessionOrder") || "{}")).toEqual({ w1: ["parent", "team", "sub", "other"] });
+  });
+
   test("plugin open button uses backend folder browser and opens selected workspace path", async () => {
     const app = setupApp();
     const context = testContext(app, { backendCalls: [], backend: async (method, options) => {

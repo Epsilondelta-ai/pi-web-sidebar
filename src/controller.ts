@@ -1,7 +1,7 @@
 import { loadPiStatus, loadStoredWorkspaces, loadWorkspaces, saveWorkspaceCache, type WorkspaceHydrationStep } from "./api";
 import { bindWorkspaceActions } from "./actions";
 import { createSidebarBridge } from "./bridge";
-import { animateMovedSiblings, measureTops, movableSiblings } from "./drag";
+import { animateMovedSiblings, canMoveSessionNear, measureTops, movableSiblings } from "./drag";
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
 import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
 import { applySidebarGrid, bindHeaderSidebarToggle, bindResizer, restoreSidebarLayout } from "./layout";
@@ -545,7 +545,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function moveSessionNear(source: HTMLElement | null, target: Element | null, event: DragEvent): void {
-    if (!source || !target || source.dataset.workspace !== (target as HTMLElement).dataset.workspace) {
+    if (!source || !target || !canMoveSessionNear(source, target as HTMLElement)) {
       return;
     }
 
