@@ -1,22 +1,38 @@
 import { WORKSPACE_CACHE_KEY } from "./constants";
-import { readStoredValue, storeJson } from "./storage";
+import { readStoredValue } from "./storage";
 import type { AppElement, FolderListing, PiStatus, PluginContext, SessionRenameResponse, SidebarSession, SidebarWorkspace } from "./types";
 
-export async function loadWorkspaces(context: PluginContext, app: AppElement): Promise<SidebarWorkspace[]> {
-  const directWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(directWorkspaceList(context, app));
+export type WorkspaceHydrationStep = "local" | "file" | "actual";
 
-  if (directWorkspaces.length > 0) {
-    return validateAndStoreWorkspaces(context, directWorkspaces);
-  }
+export type WorkspaceHydrationCallback = (workspaces: SidebarWorkspace[], step: WorkspaceHydrationStep) => void;
 
-  const cachedWorkspaces: SidebarWorkspace[] = await loadWorkspaceCache(context);
+export async function loadWorkspaces(
+  context: PluginContext,
+  app: AppElement,
+  onHydrate?: WorkspaceHydrationCallback,
+): Promise<SidebarWorkspace[]> {
+  const localWorkspaces: SidebarWorkspace[] = readWorkspaceCache();
+  notifyHydration(onHydrate, localWorkspaces, "local");
+
+  const fileWorkspaces: SidebarWorkspace[] = await loadWorkspaceCache(context);
+  notifyHydration(onHydrate, fileWorkspaces, "file");
+
   const latestDirectWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(directWorkspaceList(context, app));
+  const workspaceSource: SidebarWorkspace[] = latestDirectWorkspaces.length > 0
+    ? latestDirectWorkspaces
+    : fileWorkspaces.length > 0
+      ? fileWorkspaces
+      : localWorkspaces;
 
-  if (latestDirectWorkspaces.length > 0) {
-    return validateAndStoreWorkspaces(context, latestDirectWorkspaces);
+  if (workspaceSource.length > 0) {
+    return validateAndStoreWorkspaces(context, workspaceSource);
   }
 
-  return cachedWorkspaces.length > 0 ? cachedWorkspaces : directWorkspaces;
+  return workspaceSource;
+}
+
+export function loadStoredWorkspaces(): SidebarWorkspace[] {
+  return readWorkspaceCache();
 }
 
 export async function deleteWorkspaceById(app: AppElement, workspaceId?: string): Promise<void> {
@@ -167,10 +183,7 @@ export async function saveWorkspaceCache(context: PluginContext, workspaces: Sid
 }
 
 async function validateAndStoreWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
-  const validatedWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(await validateWorkspaces(context, workspaces));
-  storeWorkspaceCache(validatedWorkspaces);
-  saveWorkspaceCacheInBackground(context, validatedWorkspaces);
-  return validatedWorkspaces;
+  return normalizeSidebarWorkspaces(await validateWorkspaces(context, workspaces));
 }
 
 async function validateWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
@@ -187,10 +200,16 @@ async function validateWorkspaces(context: PluginContext, workspaces: SidebarWor
   return workspaces;
 }
 
-function saveWorkspaceCacheInBackground(context: PluginContext, workspaces: SidebarWorkspace[]): void {
-  void saveWorkspaceCache(context, workspaces).catch((error: unknown): void => {
-    console.warn("pi-web-sidebar failed to save workspace cache", error);
-  });
+function notifyHydration(
+  onHydrate: WorkspaceHydrationCallback | undefined,
+  workspaces: SidebarWorkspace[],
+  step: WorkspaceHydrationStep,
+): void {
+  if (workspaces.length === 0) {
+    return;
+  }
+
+  onHydrate?.(workspaces, step);
 }
 
 function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWorkspace[] {
@@ -202,17 +221,17 @@ function directWorkspaceList(context: PluginContext, app: AppElement): SidebarWo
 }
 
 async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorkspace[]> {
-  const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
+  try {
+    const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
 
-  if (isRecord(result) && Array.isArray(result.workspaces)) {
-    const backendWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(result.workspaces.filter(isSidebarWorkspace));
-    storeWorkspaceCache(backendWorkspaces);
-    return backendWorkspaces;
+    if (isRecord(result) && Array.isArray(result.workspaces)) {
+      return normalizeSidebarWorkspaces(result.workspaces.filter(isSidebarWorkspace));
+    }
+  } catch (error) {
+    console.warn("pi-web-sidebar failed to load workspace cache", error);
   }
 
-  const cachedWorkspaces: SidebarWorkspace[] = readWorkspaceCache();
-  storeWorkspaceCache(cachedWorkspaces);
-  return cachedWorkspaces;
+  return readWorkspaceCache();
 }
 
 function readWorkspaceCache(): SidebarWorkspace[] {
@@ -244,14 +263,6 @@ function normalizeSidebarSession(session: SidebarSession): SidebarSession {
     normalized.name = legacyTitle.trim();
   }
   return normalized as SidebarSession;
-}
-
-function storeWorkspaceCache(workspaces: SidebarWorkspace[]): void {
-  if (workspaces.length === 0) {
-    return;
-  }
-
-  storeJson(WORKSPACE_CACHE_KEY, { workspaces });
 }
 
 function isSidebarWorkspace(value: unknown): value is SidebarWorkspace {
