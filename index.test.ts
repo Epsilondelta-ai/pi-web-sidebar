@@ -1244,15 +1244,43 @@ describe("pi-web-sidebar plugin", () => {
     expect(hostNewSessionClicks).toBe(0);
     expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(1);
     expect(app.querySelector("[data-session='s1'] .session-menu-button")).toBeTruthy();
-    expect(app.querySelector("[data-session='s1'].active")).toBeFalsy();
-    expect(app.dataset.activeSessionId || "").toBe("");
+    expect(app.querySelector("[data-session='s1'].active")).toBeTruthy();
+    expect(app.dataset.activeSessionId || "").toBe("s1");
+    expect(app.dataset.route).toBe("workspace");
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
-  test("new session without a host id does not fabricate optimistic sessions", async () => {
+  test("new session falls back to host creation when backend create-session fails", async () => {
+    const app = setupApp();
+    app.newSession = async (workspaceId: string): Promise<unknown> => {
+      app.testWorkspaces = [{ id: workspaceId, name: "one", path: "/one", sessions: [{ id: "fallback", name: "fallback" }] }];
+      return { sessionId: "fallback" };
+    };
+    const controller = createSidebarController(app, testContext(app, {
+      backend: async (method: string): Promise<unknown> => {
+        if (method === "create-session") {
+          throw new Error("legacy backend");
+        }
+
+        return {};
+      },
+    }));
+
+    controller.mount();
+    requireElement(app, "[data-action='new-session']").dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-session='fallback'].active")).toBeTruthy();
+    expect(app.dataset.activeSessionId || "").toBe("fallback");
+  });
+
+  test("new session without a host id renders optimistic session until real session appears", async () => {
     const app = setupApp();
     const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "old", name: "old session" }] }];
     app.newSession = async (): Promise<unknown> => undefined;
     globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event").subscribe((event) => {
       sidebarEvents.push(event);
@@ -1265,10 +1293,33 @@ describe("pi-web-sidebar plugin", () => {
     await Promise.resolve();
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
-    expect(app.querySelectorAll("[data-workspace-group='w1'] .session-row[data-session]")).toHaveLength(0);
-    expect(app.dataset.activeSessionId || "").toBe("");
-    expect(sidebarEvents.some((event) => event.type === "session.created")).toBe(false);
+    const optimisticRow: HTMLElement = requireElement(app, "[data-workspace-group='w1'] [data-session^='optimistic-']");
+    const optimisticSessionId: string = optimisticRow.dataset.session || "";
+    expect(optimisticRow.textContent).toContain("New chat");
+    expect(optimisticRow.classList.contains("active")).toBe(true);
+    expect(app.dataset.activeSessionId || "").toBe(optimisticSessionId);
+    expect(app.dataset.route).toBe("workspace");
+    expect(app.querySelector("[data-session='old']")).toBeTruthy();
+    expect(sidebarEvents.some((event) => event.type === "session.created")).toBe(true);
     expect(sidebarEvents.some((event) => event.type === "new-session")).toBe(true);
+
+    await controller.refresh();
+
+    expect(app.querySelector("[data-workspace-group='w1'] [data-session^='optimistic-']")).toBeTruthy();
+    expect(app.dataset.activeSessionId || "").toBe(optimisticSessionId);
+
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [{ id: "real", name: "real session" }, { id: "old", name: "old session" }],
+    }];
+    await controller.refresh();
+
+    expect(app.querySelector("[data-workspace-group='w1'] [data-session^='optimistic-']")).toBeFalsy();
+    expect(app.querySelector("[data-session='real'] .title")?.textContent).toBe("real session");
+    expect(app.dataset.activeSessionId || "").toBe("real");
+    expect(app.querySelector("[data-session='real'].active")).toBeTruthy();
   });
 
   test("uses cached workspaces when direct pi state is empty", async () => {

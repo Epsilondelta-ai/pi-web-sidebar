@@ -43,12 +43,26 @@ export async function deleteWorkspaceById(app: AppElement, workspaceId?: string)
   await app.deleteWorkspace?.(workspaceId);
 }
 
-export async function createWorkspaceSession(app: AppElement, workspaceId?: string): Promise<string> {
+export async function createWorkspaceSession(context: PluginContext, app: AppElement, workspaceId?: string): Promise<string> {
   if (!workspaceId) {
     return "";
   }
 
+  const backendSessionId: string = await createBackendWorkspaceSession(context, workspaceId);
+  if (backendSessionId) {
+    return backendSessionId;
+  }
+
   return sessionIdFromResponse(await app.newSession?.(workspaceId));
+}
+
+async function createBackendWorkspaceSession(context: PluginContext, workspaceId: string): Promise<string> {
+  try {
+    return sessionIdFromResponse(await context.backend?.("create-session", { data: { workspaceId } }));
+  } catch (error) {
+    console.warn("pi-web-sidebar failed to create backend session", error);
+    return "";
+  }
 }
 
 export async function deleteWorkspaceSessionList(

@@ -116,11 +116,15 @@ async function handleMutatingWorkspaceAction(
   }
 
   if (action === "new-session") {
-    const workspaceId: string = target.dataset.workspace || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup || "";
+    const workspaceId: string = target.dataset.workspace
+      || target.closest<HTMLElement>("[data-workspace-group]")?.dataset.workspaceGroup
+      || "";
     const existingSessionIds: Set<string> = workspaceSessionIds(app, workspaceId);
-    const createdSessionId: string = await createWorkspaceSession(app, workspaceId);
+    const createdSessionId: string = await createWorkspaceSession(context, app, workspaceId);
+    const detectedSessionId: string = createdSessionId || createdWorkspaceSessionId(app, workspaceId, existingSessionIds);
+    const sessionId: string = detectedSessionId || optimisticWorkspaceSessionId();
     await refreshWorkspaces();
-    createSidebarSession(app, workspaceId, createdSessionId || createdWorkspaceSessionId(app, workspaceId, existingSessionIds));
+    createSidebarSession(app, workspaceId, sessionId, existingSessionIds);
     sidebarBridge.emitEvent("new-session", { workspaceId });
     return true;
   }
@@ -306,12 +310,22 @@ function deletedSessionsForIds(sessions: SidebarSession[], sessionIds: string[])
   });
 }
 
-function createSidebarSession(app: AppElement, workspaceId: string, sessionId: string): void {
+function createSidebarSession(app: AppElement, workspaceId: string, sessionId: string, existingSessionIds: Set<string>): void {
   if (!workspaceId || !sessionId) {
     return;
   }
 
-  dispatchSidebarEvent(app, "pi-web-sidebar:session-created", { sessionId, status: "idle", workspaceId });
+  dispatchSidebarEvent(app, "pi-web-sidebar:session-created", {
+    existingSessionIds: [...existingSessionIds],
+    sessionId,
+    status: "idle",
+    workspaceId,
+  });
+}
+
+function optimisticWorkspaceSessionId(): string {
+  const randomValue: string = Math.random().toString(36).slice(2, 8);
+  return `optimistic-${Date.now().toString(36)}-${randomValue}`;
 }
 
 function createdWorkspaceSessionId(app: AppElement, workspaceId: string, existingSessionIds: Set<string>): string {

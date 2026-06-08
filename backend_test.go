@@ -149,6 +149,56 @@ func TestLoadWorkspaceCachePrunesMissingSessions(t *testing.T) {
 	}
 }
 
+func TestCreateSessionWritesPrivatePiSessionFile(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := createSession("w1")
+	if err != nil {
+		t.Fatalf("createSession error = %v", err)
+	}
+	sessionID := stringFromAny(result["sessionId"])
+	if sessionID == "" {
+		t.Fatal("sessionId is empty")
+	}
+
+	sessionPath := stringFromAny(result["path"])
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatalf("read session file: %v", err)
+	}
+	if !strings.Contains(string(data), `"id":"`+sessionID+`"`) || !strings.Contains(string(data), `"type":"session"`) {
+		t.Fatalf("session file = %s, want session header with id", data)
+	}
+	info, err := os.Stat(sessionPath)
+	if err != nil {
+		t.Fatalf("stat session file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("session file mode = %v, want 0600", got)
+	}
+
+	validated := loadValidatedWorkspaceCacheForTest(t)
+	sessions := validated["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
+	if len(sessions) != 1 || sessions[0].(map[string]any)["id"] != sessionID {
+		t.Fatalf("validated sessions = %v, want created session %s", sessions, sessionID)
+	}
+}
+
 func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
