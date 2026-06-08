@@ -3,6 +3,7 @@ import { Window as HappyWindow } from "happy-dom";
 import { loadWorkspaces } from "./src/api";
 import { WORKSPACE_CACHE_KEY } from "./src/constants";
 import { createSidebarController } from "./src/index";
+import { PLUGIN_STYLE_TEXT } from "./src/styles";
 import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, SubscriptionLike } from "./src/types";
 
 type BackendCallLog = { method: string; options: { workspaceId?: string; data?: Record<string, unknown> } };
@@ -1083,6 +1084,27 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
     expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
+    expect(PLUGIN_STYLE_TEXT).not.toContain(".has-active-session > .workspace-shell .dot");
+  });
+
+  test("expanded workspace rows do not receive active highlight", async () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "one" }] },
+      { id: "w2", name: "two", sessions: [{ id: "s2", name: "two" }] },
+    ];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    requireElement<HTMLElement>(app, "[data-workspace='w2'].ws-row").click();
+
+    const openedRow: HTMLElement = requireElement(app, "[data-workspace='w2'].ws-row");
+    expect(openedRow.classList.contains("open")).toBe(true);
+    expect(openedRow.classList.contains("active")).toBe(false);
+    expect(openedRow.getAttribute("aria-current")).toBe("false");
+    expect(PLUGIN_STYLE_TEXT).not.toContain(".ws-row.open,\n  [data-pi-web-sidebar-plugin] .ws-row.active");
   });
 
   test("session rows render subagent and team agent tree badges", async () => {
