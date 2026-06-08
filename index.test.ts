@@ -333,6 +333,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.render([{ id: "w2", name: "two", path: "/two", sessions: [] }]);
 
     expect(app.querySelector("[data-pi-web-sidebar-plugin] .workspace-empty")).toBeFalsy();
+    expect(requireElement(app, "[data-workspace-group='w2'] .sessions").children).toHaveLength(1);
     expect(requireElement(app, "[data-workspace-group='w2'] .label").textContent).toBe("two");
   });
 
@@ -1495,7 +1496,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-session='s1']")).toBeFalsy();
     expect(app.querySelector("[data-session='child']")).toBeFalsy();
-    expect(app.querySelector("[data-workspace-group='w1'] .sessions-empty")?.textContent).toContain("no sessions yet");
+    expect(requireElement(app, "[data-workspace-group='w1'] .sessions").children).toHaveLength(1);
     expect(app.querySelector("[data-workspace-group='w1'] [data-action='new-session']")).toBeTruthy();
 
     await Promise.resolve();

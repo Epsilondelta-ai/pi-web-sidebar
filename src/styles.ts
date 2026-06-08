@@ -77,8 +77,7 @@ export const PLUGIN_STYLE_TEXT: string = `
     outline: 2px solid var(--pi-web-sidebar-accent); outline-offset: 2px;
   }
 
-  [data-pi-web-sidebar-plugin] .workspace-empty,
-  [data-pi-web-sidebar-plugin] .sessions-empty {
+  [data-pi-web-sidebar-plugin] .workspace-empty {
     border: 1px dashed var(--pi-web-sidebar-border-dim);
     border-radius: var(--pi-web-sidebar-radius); padding: 12px;
     color: var(--pi-web-sidebar-fg-dim);

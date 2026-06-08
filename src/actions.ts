@@ -413,24 +413,15 @@ function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
     return workspace.id === workspaceId ? { ...workspace, sessions: [], sessionCount: 0, live: false } : workspace;
   });
 
-  app.querySelectorAll(`[data-workspace='${escapedWorkspaceId}'][data-session]`).forEach((node: Element): void => {
-    node.remove();
-  });
-
   const group: HTMLElement | null = app.querySelector(`[data-workspace-group='${escapedWorkspaceId}']`);
   const sessions: HTMLElement | null = group?.querySelector(".sessions") || null;
   if (!sessions) {
     return;
   }
 
-  sessions.querySelectorAll(".session-row[data-session], .clear-sessions-row").forEach((row: Element): void => row.remove());
-
-  if (!sessions.querySelector(".sessions-empty")) {
-    const empty: HTMLDivElement = document.createElement("div");
-    empty.className = "sessions-empty";
-    empty.textContent = "no sessions yet";
-    sessions.prepend(empty);
-  }
+  sessions
+    .querySelectorAll(":scope > .session-row[data-session], :scope > .clear-sessions-row")
+    .forEach((row: Element): void => row.remove());
 }
 
 function clearWorkspaceSessionSelection(app: AppElement, workspaceId: string): void {
