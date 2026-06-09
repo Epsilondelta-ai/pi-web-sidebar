@@ -573,6 +573,54 @@ describe("pi-web-sidebar plugin", () => {
     expect(localStorage.getItem(WORKSPACE_CACHE_KEY)).toBeNull();
   });
 
+  test("loadWorkspaces preserves cached empty workspaces when a new empty direct workspace appears", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [
+      { id: "cached-one", name: "cached one", path: "/cached-one", sessions: [] },
+      { id: "cached-two", name: "cached two", path: "/cached-two", sessions: [] },
+    ];
+    const directWorkspaces: SidebarWorkspace[] = [{ id: "new", name: "new", path: "/new", sessions: [] }];
+    const mergedWorkspaces: SidebarWorkspace[] = [...cachedWorkspaces, ...directWorkspaces];
+    app.testWorkspaces = directWorkspaces;
+    app.workspaceList = directWorkspaces;
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: cachedWorkspaces };
+      }
+
+      if (method === "validate-workspaces") {
+        expect(options.data?.workspaces).toEqual(mergedWorkspaces);
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+
+    expect(await loadWorkspaces(context, app)).toEqual(mergedWorkspaces);
+  });
+
+  test("loadWorkspaces preserves local cached empty workspaces on the first direct workspace load", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [{ id: "cached", name: "cached", path: "/cached", sessions: [] }];
+    const directWorkspaces: SidebarWorkspace[] = [{ id: "new", name: "new", path: "/new", sessions: [] }];
+    app.testWorkspaces = directWorkspaces;
+    app.workspaceList = directWorkspaces;
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: [] };
+      }
+
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+
+    expect(await loadWorkspaces(context, app)).toEqual([...cachedWorkspaces, ...directWorkspaces]);
+  });
+
   test("loadWorkspaces returns backend file cache before local stale cache", async () => {
     const app = setupApp();
     app.testWorkspaces = [];

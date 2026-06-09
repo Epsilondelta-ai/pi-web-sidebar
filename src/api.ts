@@ -6,6 +6,8 @@ export type WorkspaceHydrationStep = "local" | "file" | "actual";
 
 export type WorkspaceHydrationCallback = (workspaces: SidebarWorkspace[], step: WorkspaceHydrationStep) => void;
 
+const appsWithDirectWorkspaceLoad: WeakSet<AppElement> = new WeakSet();
+
 export async function loadWorkspaces(
   context: PluginContext,
   app: AppElement,
@@ -18,11 +20,15 @@ export async function loadWorkspaces(
   notifyHydration(onHydrate, fileWorkspaces, "file");
 
   const latestDirectWorkspaces: SidebarWorkspace[] = normalizeSidebarWorkspaces(directWorkspaceList(context, app));
+  const cachedWorkspaces: SidebarWorkspace[] = fileWorkspaces.length > 0 ? fileWorkspaces : localWorkspaces;
+  const shouldMergeLocalCache: boolean = latestDirectWorkspaces.length > 0 && !appsWithDirectWorkspaceLoad.has(app);
   const workspaceSource: SidebarWorkspace[] = latestDirectWorkspaces.length > 0
-    ? latestDirectWorkspaces
-    : fileWorkspaces.length > 0
-      ? fileWorkspaces
-      : localWorkspaces;
+    ? mergeCachedEmptyWorkspaces(latestDirectWorkspaces, shouldMergeLocalCache ? cachedWorkspaces : fileWorkspaces)
+    : cachedWorkspaces;
+
+  if (latestDirectWorkspaces.length > 0) {
+    appsWithDirectWorkspaceLoad.add(app);
+  }
 
   if (workspaceSource.length > 0) {
     return validateAndStoreWorkspaces(context, workspaceSource);
@@ -266,6 +272,43 @@ function normalizeSidebarWorkspaces(workspaces: SidebarWorkspace[]): SidebarWork
 
     return { ...workspace, sessions: workspace.sessions.map(normalizeSidebarSession) };
   });
+}
+
+function mergeCachedEmptyWorkspaces(
+  directWorkspaces: SidebarWorkspace[],
+  cachedWorkspaces: SidebarWorkspace[],
+): SidebarWorkspace[] {
+  if (!canMergeCachedEmptyWorkspaces(directWorkspaces, cachedWorkspaces)) {
+    return directWorkspaces;
+  }
+
+  const directWorkspacesById: Map<string, SidebarWorkspace> = new Map(
+    directWorkspaces.map((workspace: SidebarWorkspace): [string, SidebarWorkspace] => [workspace.id, workspace]),
+  );
+  const mergedWorkspaces: SidebarWorkspace[] = cachedWorkspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    return directWorkspacesById.get(workspace.id) || workspace;
+  });
+  const cachedWorkspaceIds: Set<string> = new Set(cachedWorkspaces.map((workspace: SidebarWorkspace): string => workspace.id));
+
+  for (const workspace of directWorkspaces) {
+    if (!cachedWorkspaceIds.has(workspace.id)) {
+      mergedWorkspaces.push(workspace);
+    }
+  }
+
+  return mergedWorkspaces;
+}
+
+function canMergeCachedEmptyWorkspaces(directWorkspaces: SidebarWorkspace[], cachedWorkspaces: SidebarWorkspace[]): boolean {
+  if (cachedWorkspaces.length === 0) {
+    return false;
+  }
+
+  return directWorkspaces.every(hasNoSessions) && cachedWorkspaces.every(hasNoSessions);
+}
+
+function hasNoSessions(workspace: SidebarWorkspace): boolean {
+  return !workspace.sessions || workspace.sessions.length === 0;
 }
 
 function normalizeSidebarSession(session: SidebarSession): SidebarSession {
