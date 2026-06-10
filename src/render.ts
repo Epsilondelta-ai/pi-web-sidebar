@@ -99,11 +99,11 @@ function createWorkspaceButton(
   button.dataset.workspace = workspace.id;
   button.setAttribute("aria-expanded", String(open));
   button.setAttribute("aria-current", active ? "true" : "false");
-  button.append(createWorkspaceStack(workspace, active), createWorkspaceMeta(workspace));
+  button.append(createWorkspaceStack(workspace), createWorkspaceMeta(workspace));
   return button;
 }
 
-function createWorkspaceStack(workspace: SidebarWorkspace, active: boolean): HTMLElement {
+function createWorkspaceStack(workspace: SidebarWorkspace): HTMLElement {
   const stack: HTMLSpanElement = document.createElement("span");
   const name: HTMLSpanElement = document.createElement("span");
   const dot: HTMLSpanElement = document.createElement("span");
@@ -112,7 +112,9 @@ function createWorkspaceStack(workspace: SidebarWorkspace, active: boolean): HTM
   stack.className = "ws-stack";
   name.className = "ws-name";
   dot.className = "dot";
-  dot.classList.toggle("live", active && (workspaceHasActiveSession(workspace) || !!workspace.live));
+  dot.classList.toggle("live", workspaceHasActiveSession(workspace) || !!workspace.live);
+  dot.setAttribute("aria-label", workspaceIndicatorLabel(workspace));
+  dot.title = workspaceIndicatorLabel(workspace);
   label.className = "label";
   label.textContent = workspace.name || workspace.path || workspace.id;
   path.className = "ws-path";
@@ -263,6 +265,10 @@ function createNewSessionRow(workspaceId: string): HTMLElement {
   row.dataset.workspace = workspaceId;
   row.innerHTML = `<span class="title">${ICONS.plus} new session</span>`;
   return row;
+}
+
+function workspaceIndicatorLabel(workspace: SidebarWorkspace): string {
+  return workspaceHasActiveSession(workspace) || !!workspace.live ? "workspace live" : "workspace inactive";
 }
 
 function sessionMenuId(sessionId: string): string {

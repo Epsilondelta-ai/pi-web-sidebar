@@ -12,6 +12,12 @@ export function sessionBadges(session: SidebarSession): string[] {
 }
 
 export function sessionIndicatorLabel(session: SidebarSession): string {
+  const status: string = (session.status || "").toLowerCase();
+
+  if (status === "streaming") {
+    return "session streaming";
+  }
+
   return sessionIsLive(session) ? "session active" : "session inactive";
 }
 
@@ -21,7 +27,7 @@ export function sessionIsLive(session: SidebarSession): boolean {
   }
 
   const status: string = (session.status || "").toLowerCase();
-  return !!(session.live || ["running", "thinking", "active", "live"].includes(status));
+  return !!(session.live || ["running", "thinking", "active", "live", "streaming"].includes(status));
 }
 
 export function sessionDisplayName(session: SidebarSession): string {
@@ -54,6 +60,7 @@ function isStatusLabel(value: string): boolean {
     "idle",
     "live",
     "running",
+    "streaming",
     "success",
     "thinking",
     "waiting",
