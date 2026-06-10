@@ -484,16 +484,33 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
+    const previousSessionId: string = app.dataset.activeSessionId || "";
     app.dataset.activeSessionId = sessionId || "";
     reconcileActiveWorkspace();
     storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
     recheckStoredSessionLiveState(app.dataset.activeSessionId || "");
     renderCurrentWorkspaces();
+    emitExternalActiveSessionSelected(previousSessionId);
     syncChatStreamingIndicator();
     scheduleChatStreamingSync();
     if (sessionId) {
       void refreshCurrentWorkspaces();
     }
+  }
+
+  function emitExternalActiveSessionSelected(previousSessionId: string): void {
+    const sessionId: string = app.dataset.activeSessionId || "";
+    const workspaceId: string = app.dataset.activeWorkspaceId || "";
+
+    if (!sessionId || sessionId === previousSessionId || !workspaceId) {
+      return;
+    }
+
+    sidebarBridge.emitEvent("session.selected", {
+      sessionId,
+      source: "session.activeId",
+      workspaceId,
+    });
   }
 
   function setActiveSidebarSession(workspaceId: string, sessionId: string): void {
@@ -567,12 +584,23 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
+    const activeSessionDeleted: boolean = deletedSessionIds.includes(app.dataset.activeSessionId || "");
     for (const deletedSessionId of deletedSessionIds) {
       optimisticSessionsByWorkspace = removeOptimisticSession(optimisticSessionsByWorkspace, deletedSessionId);
       workspaces = removeWorkspaceSession(workspaces, workspaceId, deletedSessionId);
     }
 
-    if (deletedSessionIds.includes(app.dataset.activeSessionId || "")) {
+    const replacementSession: SelectedSidebarSession | null = activeSessionDeleted
+      ? firstRemainingWorkspaceSession(workspaces, workspaceId)
+      : null;
+
+    if (replacementSession) {
+      app.dataset.activeSessionId = replacementSession.sessionId;
+      app.dataset.activeWorkspaceId = replacementSession.workspaceId;
+      app.sidebarOpenWorkspaceId = replacementSession.workspaceId;
+      storePersistedSelection(replacementSession.sessionId, replacementSession.workspaceId);
+      publishActiveSessionId(replacementSession.sessionId);
+    } else if (activeSessionDeleted) {
       app.dataset.activeSessionId = "";
       storePersistedSelection("", app.dataset.activeWorkspaceId || "");
       globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next(null);
@@ -580,6 +608,15 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     renderCurrentWorkspaces();
     sidebarBridge.emitEvent("active.end", { sessionId, sessionIds: deletedSessionIds, workspaceId });
+
+    if (replacementSession) {
+      sidebarBridge.emitEvent("session.selected", {
+        sessionId: replacementSession.sessionId,
+        source: "session.deleted",
+        workspaceId: replacementSession.workspaceId,
+      });
+    }
+
     sidebarBridge.emitState("active.end");
   }
 
@@ -1230,6 +1267,13 @@ function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: st
   return workspaces.find((workspace: SidebarWorkspace): boolean => {
     return (workspace.sessions || []).some((session: SidebarSession): boolean => session.id === sessionId);
   })?.id || "";
+}
+
+function firstRemainingWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: string): SelectedSidebarSession | null {
+  const workspace: SidebarWorkspace | undefined = workspaces.find((item: SidebarWorkspace): boolean => item.id === workspaceId);
+  const session: SidebarSession | undefined = workspace?.sessions?.[0];
+
+  return workspace && session ? { sessionId: session.id, workspaceId: workspace.id } : null;
 }
 
 function upsertWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: string, session: SidebarSession): SidebarWorkspace[] {
