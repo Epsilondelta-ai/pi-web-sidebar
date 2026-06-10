@@ -2139,7 +2139,7 @@ describe("pi-web-sidebar plugin", () => {
     app.workspaceList = app.testWorkspaces;
     const deletedPayloads: Record<string, unknown>[] = [];
     const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
-    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+    globalThis.piWeb!.subject<Record<string, unknown>>("session.deleted").subscribe((payload) => {
       deletedPayloads.push(payload);
     });
     globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event").subscribe((event) => {
@@ -2238,7 +2238,7 @@ describe("pi-web-sidebar plugin", () => {
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "new session" }] }];
     app.workspaceList = app.testWorkspaces;
     const deletedPayloads: Record<string, unknown>[] = [];
-    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+    globalThis.piWeb!.subject<Record<string, unknown>>("session.deleted").subscribe((payload) => {
       deletedPayloads.push(payload);
     });
     const context = testContext(app, {
@@ -2274,7 +2274,7 @@ describe("pi-web-sidebar plugin", () => {
     app.workspaceList = app.testWorkspaces;
     const deletedSessionIds: string[] = [];
     const deletedPayloads: Record<string, unknown>[] = [];
-    globalThis.piWeb!.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").subscribe((payload) => {
+    globalThis.piWeb!.subject<Record<string, unknown>>("session.deleted").subscribe((payload) => {
       deletedPayloads.push(payload);
     });
     app.deleteSession = async (sessionId: string): Promise<void> => {

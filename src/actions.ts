@@ -143,7 +143,7 @@ async function handleMutatingWorkspaceAction(
     const deletedSessionIds: string[] = await deleteWorkspaceSessionList(app, context, workspaceId, requestedSessionIds);
     const publishedSessions: SidebarSession[] = deletedSessionsForIds(deletedSessions, deletedSessionIds);
     dispatchSidebarEvent(app, "pi-web-sidebar:workspace-sessions-cleared", { sessionIds: deletedSessionIds, workspaceId: workspaceId || "" });
-    publishDeletedSessions(workspaceId || "", publishedSessions);
+    publishSessionDeleted(workspaceId || "", publishedSessions);
     sidebarBridge.emitEvent("delete-workspace-sessions", {
       sessionIds: deletedSessionIds,
       sessions: publishedSessions,
@@ -310,7 +310,7 @@ async function deleteSidebarSession(app: AppElement, context: PluginContext, row
   const deletedSessionIds: string[] = await deleteSessionList(app, context, workspaceId, requestedSessionIds);
   const publishedSessions: SidebarSession[] = deletedSessionsForIds(deletedSessions, deletedSessionIds);
   dispatchSidebarEvent(app, "pi-web-sidebar:session-deleted", { sessionId, sessionIds: deletedSessionIds, sessions: publishedSessions, workspaceId });
-  publishDeletedSessions(workspaceId, publishedSessions);
+  publishSessionDeleted(workspaceId, publishedSessions);
   await context.events?.publish("active-state", "active.end", {
     active: false,
     sessionId,
@@ -397,13 +397,13 @@ function sessionTree(app: AppElement, workspaceId: string, sessionId: string): S
   return deletedSessions.length > 0 ? deletedSessions : [{ id: sessionId }];
 }
 
-function publishDeletedSessions(workspaceId: string, sessions: SidebarSession[]): void {
+function publishSessionDeleted(workspaceId: string, sessions: SidebarSession[]): void {
   const payload: Record<string, unknown> = {
     sessionIds: sessions.map((session: SidebarSession): string => session.id),
     sessions,
     workspaceId,
   };
-  globalThis.piWeb?.subject<Record<string, unknown>>("plugin.pi-web-sidebar.deletedSessions").next(payload);
+  globalThis.piWeb?.subject<Record<string, unknown>>("session.deleted").next(payload);
 }
 
 function clearWorkspaceSessionDom(app: AppElement, workspaceId: string): void {
