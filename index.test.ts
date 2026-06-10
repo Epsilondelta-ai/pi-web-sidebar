@@ -1310,7 +1310,7 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
   });
 
-  test("automatic active session changes publish explicit selected event", async () => {
+  test("active deletion selects remaining session with explicit selected event", async () => {
     installTestPiWeb();
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
@@ -1335,12 +1335,11 @@ describe("pi-web-sidebar plugin", () => {
       bubbles: true,
       detail: { sessionId: "s1", workspaceId: "w1" },
     }));
-    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next("s2");
 
     const selectedEvent: import("./src/types").SidebarActionEvent | undefined = events.find(
       (event: import("./src/types").SidebarActionEvent): boolean => event.type === "session.selected",
     );
-    expect(selectedEvent?.detail).toEqual({ sessionId: "s2", source: "session.activeId", workspaceId: "w1" });
+    expect(selectedEvent?.detail).toEqual({ sessionId: "s2", source: "session.deleted", workspaceId: "w1" });
     expect(app.dataset.activeSessionId).toBe("s2");
 
     controller.dispose();
@@ -1862,6 +1861,50 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='team']").dataset.depth).toBe("1");
   });
 
+  test("active subagent deletion selects parent session immediately", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "sub";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+      ],
+    }];
+    const activeIds: (string | null)[] = [];
+    const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.behaviorSubject<string | null>("session.activeId", "sub")
+      .subscribe((sessionId: string | null): void => {
+        activeIds.push(sessionId);
+      });
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        sidebarEvents.push(event);
+      });
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    activeIds.length = 0;
+    sidebarEvents.length = 0;
+    app.dispatchEvent(new window.CustomEvent("pi-web-sidebar:session-deleted", {
+      bubbles: true,
+      detail: { sessionId: "sub", workspaceId: "w1" },
+    }));
+
+    const selectedEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
+      (event: import("./src/types").SidebarActionEvent): boolean => event.type === "session.selected",
+    );
+    expect(activeIds.at(-1)).toBe("parent");
+    expect(app.dataset.activeSessionId).toBe("parent");
+    expect(app.querySelector("[data-session='sub']")).toBeFalsy();
+    expect(selectedEvent?.detail).toEqual({ sessionId: "parent", source: "session.deleted", workspaceId: "w1" });
+
+    controller.dispose();
+  });
+
   test("external parent session deletion removes descendant rows", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "grandchild";
@@ -1896,8 +1939,12 @@ describe("pi-web-sidebar plugin", () => {
     const activeEndEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
       (event: import("./src/types").SidebarActionEvent): boolean => event.type === "active.end",
     );
-    expect(app.dataset.activeSessionId).toBe("");
+    const selectedEvent: import("./src/types").SidebarActionEvent | undefined = sidebarEvents.find(
+      (event: import("./src/types").SidebarActionEvent): boolean => event.type === "session.selected",
+    );
+    expect(app.dataset.activeSessionId).toBe("sibling");
     expect(activeEndEvent?.detail?.sessionIds).toEqual(["parent", "child", "grandchild"]);
+    expect(selectedEvent?.detail).toEqual({ sessionId: "sibling", source: "session.deleted", workspaceId: "w1" });
   });
 
   test("session rows use active or inactive left indicators without waiting text", async () => {
