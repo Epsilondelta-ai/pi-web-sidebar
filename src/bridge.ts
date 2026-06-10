@@ -24,6 +24,7 @@ export function createSidebarBridge(
 ): SidebarBridge {
   let latestPiStatus: PiStatus = createUnknownPiStatus();
   let latestSnapshot: SidebarSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
+  let latestSelectedSession: SelectedSession | null = resolveSelectedSession(latestSnapshot);
   const channels: SidebarRxChannels = createRxChannels(latestSnapshot, latestPiStatus);
   const state$: SubjectLike<SidebarSnapshot> | undefined = globalThis.piWeb?.behaviorSubject(
     "plugin.pi-web-sidebar.state",
@@ -50,12 +51,22 @@ export function createSidebarBridge(
   function publishState(reason: string): void {
     latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
     const selected: SelectedSession | null = resolveSelectedSession(latestSnapshot);
-    persistSelectedSession(selected);
+    publishSelectedSession(selected, false);
     channels.state$.next(latestSnapshot);
-    channels.selectedSession$.next(selected);
     state$?.next(latestSnapshot);
-    selectedSession$?.next(selected);
     publishEvent(channels, events$, { type: "state", reason, snapshot: latestSnapshot, detail: selected || {} });
+  }
+
+  function publishSelectedSession(selected: SelectedSession | null, force: boolean): void {
+    persistSelectedSession(selected);
+
+    if (!force && selectedSessionEqual(latestSelectedSession, selected)) {
+      return;
+    }
+
+    latestSelectedSession = selected;
+    channels.selectedSession$.next(selected);
+    selectedSession$?.next(selected);
   }
 
   return {
@@ -63,6 +74,14 @@ export function createSidebarBridge(
       publishState(reason);
     },
     emitEvent(type: string, detail: Record<string, unknown> = {}): void {
+      const selected: SelectedSession | null = selectedSessionFromDetail(detail);
+
+      if (type === "session.selected" && selected) {
+        const forceSelection: boolean = detail.forceSelection === true;
+        latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
+        publishSelectedSession(selected, forceSelection);
+      }
+
       publishEvent(channels, events$, { type, detail, snapshot: latestSnapshot });
     },
     updatePiStatus(status: PiStatus, reason: string): void {
@@ -125,6 +144,17 @@ function resolveSelectedSession(snapshot: SidebarSnapshot): SelectedSession | nu
   });
 
   return workspace ? { sessionId: snapshot.activeSessionId, workspaceId: workspace.id } : null;
+}
+
+function selectedSessionEqual(previous: SelectedSession | null, next: SelectedSession | null): boolean {
+  return previous?.sessionId === next?.sessionId && previous?.workspaceId === next?.workspaceId;
+}
+
+function selectedSessionFromDetail(detail: Record<string, unknown>): SelectedSession | null {
+  const sessionId: string = typeof detail.sessionId === "string" ? detail.sessionId : "";
+  const workspaceId: string = typeof detail.workspaceId === "string" ? detail.workspaceId : "";
+
+  return sessionId && workspaceId ? { sessionId, workspaceId } : null;
 }
 
 function readStoredString(key: string): string {

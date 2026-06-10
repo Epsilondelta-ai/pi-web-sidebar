@@ -350,12 +350,22 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     delete chatStreamingSnapshots[sessionId];
   }
 
-  function markChatStreamingSession(sessionId: string): void {
+  function markChatStreamingSession(sessionId: string): boolean {
     if (!chatStreamingSnapshots[sessionId]) {
       chatStreamingSnapshots = { ...chatStreamingSnapshots, [sessionId]: snapshotSession(workspaces, app.workspaceList || [], sessionId) };
     }
 
+    if (chatStreamingSessionIsMarked(sessionId)) {
+      return false;
+    }
+
     workspaces = updateWorkspaceSession(workspaces, sessionId, { live: true, status: "streaming" });
+    return true;
+  }
+
+  function chatStreamingSessionIsMarked(sessionId: string): boolean {
+    const session: SidebarSession | undefined = findSessionById(workspaces, sessionId);
+    return session?.live === true && session.status === "streaming";
   }
 
   function scheduleChatStreamingWatch(): void {
@@ -382,8 +392,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     if (previousSessionId === nextSessionId) {
       if (nextSessionId) {
-        markChatStreamingSession(nextSessionId);
-        renderCurrentWorkspaces();
+        const changed: boolean = markChatStreamingSession(nextSessionId);
+
+        if (changed) {
+          renderCurrentWorkspaces();
+        }
+
         scheduleChatStreamingWatch();
       }
 
