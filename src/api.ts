@@ -1,6 +1,14 @@
 import { WORKSPACE_CACHE_KEY } from "./constants";
 import { readStoredValue } from "./storage";
-import type { AppElement, FolderListing, PiStatus, PluginContext, SessionRenameResponse, SidebarSession, SidebarWorkspace } from "./types";
+import type {
+  AppElement,
+  FolderListing,
+  PiStatus,
+  PluginContext,
+  SessionRenameResponse,
+  SidebarSession,
+  SidebarWorkspace,
+} from "./types";
 
 export type WorkspaceHydrationStep = "local" | "file" | "actual";
 
@@ -110,9 +118,25 @@ export async function deleteSessionList(
   return deletedSessionIds;
 }
 
-export async function renameSessionById(app: AppElement, sessionId: string): Promise<SessionRenameResponse> {
-  await app.renameSession?.(sessionId);
-  return {};
+export async function renameSessionById(
+  app: AppElement,
+  context: PluginContext,
+  workspaceId: string,
+  sessionId: string,
+  name: string,
+): Promise<SessionRenameResponse> {
+  if (context.backend) {
+    const result: unknown = await context.backend("rename-session", { data: { name, sessionId, workspaceId } });
+
+    if (isRecord(result) && isRecord(result.session)) {
+      return { session: { name: asString(result.session.name) } };
+    }
+
+    return { session: { name } };
+  }
+
+  await app.renameSession?.(sessionId, name);
+  return { session: { name } };
 }
 
 export async function deleteSessionById(app: AppElement, sessionId: string): Promise<void> {

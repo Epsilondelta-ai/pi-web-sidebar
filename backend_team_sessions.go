@@ -78,6 +78,32 @@ func teamMembersForWorkspace(configPath string, workspacePath string) []map[stri
 	return members
 }
 
+func teamSessionFileForWorkspace(workspacePath, sessionID string) string {
+	teamsDir := defaultPiTeamsDir()
+	entries, err := os.ReadDir(teamsDir)
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		configPath := filepath.Join(teamsDir, entry.Name(), "config.json")
+		for _, member := range teamMembersForWorkspace(configPath, workspacePath) {
+			sessionFile := strings.TrimSpace(stringFromAny(member["sessionFile"]))
+			if sessionFile == "" || !regularFileExists(sessionFile) {
+				continue
+			}
+			if sessionIDFromFile(sessionFile) == sessionID {
+				return sessionFile
+			}
+		}
+	}
+	return ""
+}
+
 func teamMemberSessionName(member map[string]any) string {
 	meta, _ := member["meta"].(map[string]any)
 	if name := strings.TrimSpace(stringFromAny(meta["sessionName"])); name != "" {
@@ -157,6 +183,11 @@ func removeTeamSessionsFromConfig(configPath string, workspacePath string, delet
 			deletedSet[sessionID] = true
 		}
 		if sessionFile != "" && regularFileExists(sessionFile) {
+			if sessionID != "" {
+				if err := os.Remove(sessionRenameMetadataPath(filepath.Dir(sessionFile), sessionID)); err != nil && !os.IsNotExist(err) {
+					return nil, err
+				}
+			}
 			if err := os.Remove(sessionFile); err != nil {
 				return nil, err
 			}

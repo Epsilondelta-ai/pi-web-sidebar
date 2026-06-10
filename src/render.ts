@@ -181,6 +181,7 @@ function createPluginSessionRow(
   row.dataset.session = session.id;
   row.dataset.workspace = workspace.id;
   row.dataset.title = nameText;
+  row.dataset.fullTitle = session.name || session.id;
   row.dataset.lastUsed = session.lastUsed || "";
   row.dataset.depth = String(depth);
   row.style.setProperty("--pi-web-sidebar-session-depth", String(depth));
