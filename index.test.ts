@@ -1413,7 +1413,17 @@ describe("pi-web-sidebar plugin", () => {
     const controller = createSidebarController(app, testContext(app));
     controller.mount();
     await controller.refresh();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 20); });
+    const renderEvents: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        if (event.type === "state" && event.reason === "render-workspaces") {
+          renderEvents.push(event);
+        }
+      });
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 260); });
 
+    expect(renderEvents.length).toBeLessThanOrEqual(1);
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
     expect(app.querySelector("[data-session='s2'] .session-indicator.live")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();

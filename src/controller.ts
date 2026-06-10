@@ -368,8 +368,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     return session?.live === true && session.status === "streaming";
   }
 
-  function scheduleChatStreamingWatch(): void {
-    if (!chatStreamingSessionId || chatStreamingWatchTimer) {
+  function scheduleChatStreamingWatch(domStreaming: boolean): void {
+    if (!domStreaming || !chatStreamingSessionId || chatStreamingWatchTimer) {
       return;
     }
 
@@ -398,7 +398,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
           renderCurrentWorkspaces();
         }
 
-        scheduleChatStreamingWatch();
+        scheduleChatStreamingWatch(domStreaming);
       }
 
       return;
@@ -415,7 +415,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     chatStreamingSessionId = nextSessionId;
     chatStreamingWatchAttempts = 0;
     renderCurrentWorkspaces();
-    scheduleChatStreamingWatch();
+    scheduleChatStreamingWatch(domStreaming);
   }
 
   function applyActiveSession(sessionId: string | null): void {
@@ -610,7 +610,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       }
 
       const directWorkspaces: SidebarWorkspace[] = directWorkspaceList();
-      if (directWorkspaces.length > 0 && workspaceContentSignature(directWorkspaces) !== workspaceContentSignature(workspaces)) {
+      const storedStreamingSessionIds: Set<string> = new Set(storedChatStreamingSessionIds());
+      if (
+        directWorkspaces.length > 0 &&
+        workspaceContentSignature(directWorkspaces, storedStreamingSessionIds) !==
+          workspaceContentSignature(workspaces, storedStreamingSessionIds)
+      ) {
         hostWorkspaceRecheckAttempts = 0;
         void refreshCurrentWorkspaces();
       }
@@ -1347,10 +1352,14 @@ function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
   return sessions.some(sessionIsLive);
 }
 
-function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
+function workspaceContentSignature(
+  workspaces: SidebarWorkspace[],
+  ignoredStatusSessionIds: Set<string> = new Set(),
+): string {
   return workspaces.map((workspace: SidebarWorkspace): string => {
     const sessions: string = (workspace.sessions || []).map((session: SidebarSession): string => {
-      return [session.id, session.name || "", session.status || "", session.kind || ""].join("/");
+      const status: string = ignoredStatusSessionIds.has(session.id) ? "" : session.status || "";
+      return [session.id, session.name || "", status, session.kind || ""].join("/");
     }).join(",");
 
     return [workspace.id, workspace.name || "", workspace.path || "", workspace.sessionCount || 0, sessions].join(":");
