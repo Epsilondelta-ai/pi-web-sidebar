@@ -12,6 +12,12 @@ export function sessionBadges(session: SidebarSession): string[] {
 }
 
 export function sessionIndicatorLabel(session: SidebarSession): string {
+  const status: string = (session.status || "").toLowerCase();
+
+  if (status === "streaming") {
+    return "session streaming";
+  }
+
   return sessionIsLive(session) ? "session active" : "session inactive";
 }
 

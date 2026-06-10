@@ -1126,6 +1126,126 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .ws-name .dot").title).toBe("workspace live");
   });
 
+  test("chat streaming DOM marks active session and workspace indicators green", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "idle", status: "idle" }] }];
+    const chatRoot: HTMLElement = document.createElement("section");
+    const streamingMessage: HTMLElement = document.createElement("article");
+    const controller = createSidebarController(app, testContext(app));
+    chatRoot.dataset.pluginChatRoot = "";
+    requireElement(app, ".app-body").append(chatRoot);
+    controller.mount();
+    await Promise.resolve();
+
+    streamingMessage.dataset.streaming = "true";
+    chatRoot.append(streamingMessage);
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session streaming");
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .ws-name .dot").title).toBe("workspace live");
+
+    streamingMessage.removeAttribute("data-streaming");
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
+  });
+
+  test("chat streaming DOM follows active session changes without stale indicators", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "one", status: "idle" }] },
+      { id: "w2", name: "two", sessions: [{ id: "s2", name: "two", status: "idle" }] },
+    ];
+    const chatRoot: HTMLElement = document.createElement("section");
+    const streamingMessage: HTMLElement = document.createElement("article");
+    const controller = createSidebarController(app, testContext(app));
+    chatRoot.dataset.pluginChatRoot = "";
+    streamingMessage.dataset.streaming = "true";
+    chatRoot.append(streamingMessage);
+    requireElement(app, ".app-body").append(chatRoot);
+    controller.mount();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+
+    globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next("s2");
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-session='s2'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeTruthy();
+
+    chatRoot.remove();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(app.querySelector("[data-session='s2'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
+  });
+
+  test("chat streaming DOM restores latest workspace refresh state", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "running", status: "running", live: true }] }];
+    localStorage.removeItem(WORKSPACE_CACHE_KEY);
+    const chatRoot: HTMLElement = document.createElement("section");
+    const streamingMessage: HTMLElement = document.createElement("article");
+    const controller = createSidebarController(app, testContext(app));
+    chatRoot.dataset.pluginChatRoot = "";
+    requireElement(app, ".app-body").append(chatRoot);
+    controller.mount();
+    await Promise.resolve();
+
+    streamingMessage.dataset.streaming = "true";
+    chatRoot.append(streamingMessage);
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "running", status: "idle" }] }];
+    await controller.refresh();
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session streaming");
+
+    streamingMessage.remove();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 1000); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session inactive");
+  });
+
+  test("chat streaming DOM restores prior running state without refresh", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "running", status: "running", live: true }] }];
+    localStorage.removeItem(WORKSPACE_CACHE_KEY);
+    const chatRoot: HTMLElement = document.createElement("section");
+    const streamingMessage: HTMLElement = document.createElement("article");
+    const controller = createSidebarController(app, testContext(app));
+    chatRoot.dataset.pluginChatRoot = "";
+    requireElement(app, ".app-body").append(chatRoot);
+    controller.mount();
+    await Promise.resolve();
+
+    streamingMessage.dataset.streaming = "true";
+    chatRoot.append(streamingMessage);
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    streamingMessage.remove();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 1000); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session active");
+  });
+
   test("streaming sessions and their workspaces show green indicators", async () => {
     const app = setupApp();
     app.dataset.activeWorkspaceId = "w1";

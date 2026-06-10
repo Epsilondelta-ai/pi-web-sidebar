@@ -33,8 +33,15 @@ type SelectedSidebarSession = {
   workspaceId: string;
 };
 
+type ChatStreamingSessionSnapshot = {
+  live?: boolean;
+  status?: string;
+};
+
 const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
 const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
+const CHAT_STREAMING_FAST_WATCH_LIMIT = 20;
+const CHAT_STREAMING_WATCH_INTERVAL_MS = 250;
 
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
@@ -43,6 +50,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let sidebarToggleCleanup: (() => void) | undefined;
   let sidebarSessionEventsCleanup: (() => void) | undefined;
   let pluginEventsCleanup: (() => void) | undefined;
+  let chatStreamingCleanup: (() => void) | undefined;
+  let chatStreamingSessionId: string = "";
+  let chatStreamingTimer: ReturnType<typeof setTimeout> | undefined;
+  let chatStreamingWatchTimer: ReturnType<typeof setTimeout> | undefined;
+  let chatStreamingWatchAttempts: number = 0;
+  let chatStreamingSnapshots: Record<string, ChatStreamingSessionSnapshot> = {};
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let hostWorkspaceRecheckTimer: ReturnType<typeof setTimeout> | undefined;
@@ -88,6 +101,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindSidebarSessionEvents();
     bindPluginEventChannels();
     bindPiWebChannels();
+    bindChatStreamingObserver();
     renderCurrentWorkspaces();
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
@@ -108,6 +122,19 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     sidebarSessionEventsCleanup = undefined;
     pluginEventsCleanup?.();
     pluginEventsCleanup = undefined;
+    chatStreamingCleanup?.();
+    chatStreamingCleanup = undefined;
+    chatStreamingSessionId = "";
+    if (chatStreamingTimer) {
+      clearTimeout(chatStreamingTimer);
+      chatStreamingTimer = undefined;
+    }
+    if (chatStreamingWatchTimer) {
+      clearTimeout(chatStreamingWatchTimer);
+      chatStreamingWatchTimer = undefined;
+    }
+    chatStreamingWatchAttempts = 0;
+    chatStreamingSnapshots = {};
     channelSubscriptions.forEach((subscription: SubscriptionLike): void => subscription.unsubscribe());
     channelSubscriptions = [];
     if (refreshTimer) {
@@ -195,8 +222,184 @@ export function createSidebarController(app: AppElement, context: PluginContext 
         .subscribe((sessionId: string | null): void => applyActiveSession(sessionId)),
       globalThis.piWeb.subject<Record<string, unknown>>("session.changed")
         .subscribe((change: Record<string, unknown>): void => applySessionChange(change)),
-      globalThis.piWeb.subject("chat.input.submitted").subscribe((): void => scheduleRefresh()),
+      globalThis.piWeb.subject("chat.input.submitted").subscribe((): void => {
+        scheduleChatStreamingSync();
+        scheduleRefresh();
+      }),
     ];
+  }
+
+  function bindChatStreamingObserver(): void {
+    if (chatStreamingCleanup) {
+      return;
+    }
+
+    const win: (Window & typeof globalThis) | null = app.ownerDocument.defaultView;
+    if (!win) {
+      return;
+    }
+
+    let chatRoot: Element | null = null;
+    let chatObserver: MutationObserver | undefined;
+    let chatParentObserver: MutationObserver | undefined;
+    const clearObservedChatRoot = (): void => {
+      chatObserver?.disconnect();
+      chatParentObserver?.disconnect();
+      chatObserver = undefined;
+      chatParentObserver = undefined;
+      chatRoot = null;
+      clearChatStreamingSession();
+    };
+    const clearDetachedChatRoot = (records: MutationRecord[]): boolean => {
+      if (!chatRoot) {
+        return false;
+      }
+
+      if (!chatRoot.isConnected) {
+        clearObservedChatRoot();
+        return true;
+      }
+
+      for (const record of records) {
+        for (const removedNode of Array.from(record.removedNodes)) {
+          if (nodeContainsChatRoot(removedNode, chatRoot)) {
+            clearObservedChatRoot();
+            return true;
+          }
+        }
+      }
+
+      return false;
+    };
+    const attachChatRoot = (): void => {
+      const nextChatRoot: Element | null = app.querySelector("[data-plugin-chat-root]");
+
+      if (!nextChatRoot) {
+        clearObservedChatRoot();
+        return;
+      }
+
+      if (nextChatRoot === chatRoot) {
+        return;
+      }
+
+      chatObserver?.disconnect();
+      chatParentObserver?.disconnect();
+      chatRoot = nextChatRoot;
+      const nextObserver: MutationObserver = new win.MutationObserver((): void => scheduleChatStreamingSync());
+      const nextParentObserver: MutationObserver = new win.MutationObserver((records: MutationRecord[]): void => {
+        clearDetachedChatRoot(records);
+      });
+      nextObserver.observe(nextChatRoot, {
+        attributes: true,
+        attributeFilter: ["data-streaming"],
+        childList: true,
+        subtree: true,
+      });
+      nextParentObserver.observe(nextChatRoot.parentNode || app, { childList: true });
+      chatObserver = nextObserver;
+      chatParentObserver = nextParentObserver;
+      scheduleChatStreamingSync();
+    };
+    const appObserver: MutationObserver = new win.MutationObserver((records: MutationRecord[]): void => {
+      clearDetachedChatRoot(records);
+      attachChatRoot();
+    });
+    appObserver.observe(app, { childList: true, subtree: true });
+    attachChatRoot();
+    chatStreamingCleanup = (): void => {
+      appObserver.disconnect();
+      chatObserver?.disconnect();
+      chatParentObserver?.disconnect();
+    };
+  }
+
+  function scheduleChatStreamingSync(): void {
+    if (chatStreamingTimer) {
+      clearTimeout(chatStreamingTimer);
+    }
+
+    chatStreamingTimer = setTimeout((): void => {
+      chatStreamingTimer = undefined;
+      syncChatStreamingIndicator();
+    }, 0);
+  }
+
+  function clearChatStreamingSession(): void {
+    if (chatStreamingWatchTimer) {
+      clearTimeout(chatStreamingWatchTimer);
+      chatStreamingWatchTimer = undefined;
+    }
+    chatStreamingWatchAttempts = 0;
+
+    if (!chatStreamingSessionId) {
+      return;
+    }
+
+    restoreChatStreamingSession(chatStreamingSessionId);
+    chatStreamingSessionId = "";
+    renderCurrentWorkspaces();
+  }
+
+  function restoreChatStreamingSession(sessionId: string): void {
+    const snapshot: ChatStreamingSessionSnapshot | undefined = chatStreamingSnapshots[sessionId];
+    const patch: Partial<SidebarSession> = snapshot || { live: false, status: "idle" };
+
+    workspaces = updateWorkspaceSession(workspaces, sessionId, patch);
+    delete chatStreamingSnapshots[sessionId];
+  }
+
+  function markChatStreamingSession(sessionId: string): void {
+    if (!chatStreamingSnapshots[sessionId]) {
+      chatStreamingSnapshots = { ...chatStreamingSnapshots, [sessionId]: snapshotSession(workspaces, app.workspaceList || [], sessionId) };
+    }
+
+    workspaces = updateWorkspaceSession(workspaces, sessionId, { live: true, status: "streaming" });
+  }
+
+  function scheduleChatStreamingWatch(): void {
+    if (!chatStreamingSessionId || chatStreamingWatchTimer) {
+      return;
+    }
+
+    const delayMs: number = chatStreamingWatchAttempts < CHAT_STREAMING_FAST_WATCH_LIMIT
+      ? 0
+      : CHAT_STREAMING_WATCH_INTERVAL_MS;
+    chatStreamingWatchTimer = setTimeout((): void => {
+      chatStreamingWatchTimer = undefined;
+      chatStreamingWatchAttempts += 1;
+      syncChatStreamingIndicator();
+    }, delayMs);
+  }
+
+  function syncChatStreamingIndicator(): void {
+    const streaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
+      .some((element: Element): boolean => element.isConnected);
+    const nextSessionId: string = streaming ? app.dataset.activeSessionId || "" : "";
+    const previousSessionId: string = chatStreamingSessionId;
+
+    if (previousSessionId === nextSessionId) {
+      if (nextSessionId) {
+        markChatStreamingSession(nextSessionId);
+        renderCurrentWorkspaces();
+        scheduleChatStreamingWatch();
+      }
+
+      return;
+    }
+
+    if (previousSessionId) {
+      restoreChatStreamingSession(previousSessionId);
+    }
+
+    if (nextSessionId) {
+      markChatStreamingSession(nextSessionId);
+    }
+
+    chatStreamingSessionId = nextSessionId;
+    chatStreamingWatchAttempts = 0;
+    renderCurrentWorkspaces();
+    scheduleChatStreamingWatch();
   }
 
   function applyActiveSession(sessionId: string | null): void {
@@ -208,6 +411,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     reconcileActiveWorkspace();
     storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
     renderCurrentWorkspaces();
+    syncChatStreamingIndicator();
+    scheduleChatStreamingSync();
   }
 
   function setActiveSidebarSession(workspaceId: string, sessionId: string): void {
@@ -258,7 +463,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     clearedSessionWorkspaceIds.delete(workspaceId);
-    const session: SidebarSession = { id: sessionId, name: "New chat", active: true, status };
+    const session: SidebarSession = { id: sessionId, name: "New chat", active: true, live: true, status };
     optimisticSessionsByWorkspace = {
       ...optimisticSessionsByWorkspace,
       [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
@@ -353,8 +558,16 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
+    if (sessionId === chatStreamingSessionId) {
+      chatStreamingSnapshots = {
+        ...chatStreamingSnapshots,
+        [sessionId]: { ...chatStreamingSnapshots[sessionId], ...patch },
+      };
+    }
+
     workspaces = updateWorkspaceSession(workspaces, sessionId, patch);
     renderCurrentWorkspaces();
+    syncChatStreamingIndicator();
   }
 
   function scheduleRefresh(delayMs: number = 50): void {
@@ -485,6 +698,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       clearedSessionWorkspaceIds,
       app,
     );
+    if (chatStreamingSessionId) {
+      chatStreamingSnapshots = {
+        ...chatStreamingSnapshots,
+        [chatStreamingSessionId]: snapshotSession(workspaces, refreshedWorkspaces, chatStreamingSessionId),
+      };
+    }
     if (step === "file") {
       storeJson(WORKSPACE_CACHE_KEY, { workspaces });
     }
@@ -499,6 +718,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
     reconcileActiveWorkspace();
     renderCurrentWorkspaces();
+    syncChatStreamingIndicator();
     sidebarBridge.emitEvent("refresh-workspaces", { step, workspaceCount: workspaces.length });
   }
 
@@ -798,6 +1018,37 @@ function withoutWorkspaceSessions(
   }
 
   return nextWorkspaces;
+}
+
+function nodeContainsChatRoot(node: Node, chatRoot: Element): boolean {
+  if (node === chatRoot) {
+    return true;
+  }
+
+  return node instanceof Element && node.contains(chatRoot);
+}
+
+function snapshotSession(
+  workspaces: SidebarWorkspace[],
+  appWorkspaces: SidebarWorkspace[],
+  sessionId: string,
+): ChatStreamingSessionSnapshot {
+  const session: SidebarSession | undefined = findSessionById(workspaces, sessionId) || findSessionById(appWorkspaces, sessionId);
+  return { live: session?.live, status: session?.status };
+}
+
+function findSessionById(workspaces: SidebarWorkspace[], sessionId: string): SidebarSession | undefined {
+  for (const workspace of workspaces) {
+    const session: SidebarSession | undefined = (workspace.sessions || []).find(
+      (item: SidebarSession): boolean => item.id === sessionId,
+    );
+
+    if (session) {
+      return session;
+    }
+  }
+
+  return undefined;
 }
 
 function updateWorkspaceSession(
