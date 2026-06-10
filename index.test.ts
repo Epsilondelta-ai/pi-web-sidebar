@@ -1105,7 +1105,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(events.some((event) => event.type === "select-session")).toBe(false);
   });
 
-  test("piWeb channels reconcile active id and first-message title updates", async () => {
+  test("piWeb channels reconcile active id and session updates", async () => {
     installTestPiWeb();
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "placeholder" }] }];
@@ -1113,26 +1113,84 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
     await Promise.resolve();
     globalThis.piWeb?.behaviorSubject<string | null>("session.activeId", null).next("s1");
-    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", name: "abcdefghijklmnop" });
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({
+      sessionId: "s1",
+      name: "abcdefghijklmnop",
+      status: "streaming",
+    });
 
     expect(localStorage.getItem("plugin.pi-web-sidebar.activeSessionId")).toBe("s1");
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("abcdefghijkl...");
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .ws-name .dot").title).toBe("workspace live");
   });
 
-  test("workspace rows only show green indicators when active", async () => {
+  test("streaming sessions and their workspaces show green indicators", async () => {
     const app = setupApp();
     app.dataset.activeWorkspaceId = "w1";
     app.testWorkspaces = [
-      { id: "w1", name: "one", sessions: [{ id: "s1", name: "running", status: "running" }] },
-      { id: "w2", name: "two", live: false, sessions: [{ id: "s2", name: "running", status: "running" }] },
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "idle", status: "idle" }] },
+      { id: "w2", name: "two", live: false, sessions: [{ id: "s2", name: "streaming", status: "streaming" }] },
     ];
     const controller = createSidebarController(app, testContext(app));
     controller.mount();
     await Promise.resolve();
 
-    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
-    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
+    expect(app.querySelector("[data-session='s2'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w2'] .ws-name .dot").title).toBe("workspace live");
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
     expect(PLUGIN_STYLE_TEXT).not.toContain(".has-active-session > .workspace-shell .dot");
+  });
+
+  test("session changes preserve workspace live indicators", async () => {
+    installTestPiWeb();
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", live: true, sessions: [{ id: "s1", name: "idle", status: "idle" }] }];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", name: "renamed" });
+
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .title").textContent).toBe("renamed");
+  });
+
+  test("session status changes clear stale workspace live indicators", async () => {
+    installTestPiWeb();
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", live: true, sessions: [{ id: "s1", name: "streaming", status: "streaming" }] }];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", live: false, status: "completed" });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
+  });
+
+  test("streaming active-state events mark session and workspace indicators green", async () => {
+    const app = setupApp();
+    let activeStateCallback: ((event: import("./src/types").PluginEvent) => void) | undefined;
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [] }];
+    const controller = createSidebarController(app, testContext(app, {
+      events: {
+        publish: async (): Promise<unknown> => ({}),
+        subscribe: (_channel, _eventTypes, callback) => {
+          activeStateCallback = callback;
+          return (): void => undefined;
+        },
+      },
+    }));
+    controller.mount();
+    await Promise.resolve();
+
+    activeStateCallback?.({ type: "active.start", payload: { workspaceId: "w1", sessionId: "s1", status: "streaming" } });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .ws-name .dot").title).toBe("workspace live");
   });
 
   test("expanded workspace rows do not receive active highlight", async () => {

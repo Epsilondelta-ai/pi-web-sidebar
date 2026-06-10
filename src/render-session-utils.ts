@@ -21,7 +21,7 @@ export function sessionIsLive(session: SidebarSession): boolean {
   }
 
   const status: string = (session.status || "").toLowerCase();
-  return !!(session.live || ["running", "thinking", "active", "live"].includes(status));
+  return !!(session.live || ["running", "thinking", "active", "live", "streaming"].includes(status));
 }
 
 export function sessionDisplayName(session: SidebarSession): string {
@@ -54,6 +54,7 @@ function isStatusLabel(value: string): boolean {
     "idle",
     "live",
     "running",
+    "streaming",
     "success",
     "thinking",
     "waiting",

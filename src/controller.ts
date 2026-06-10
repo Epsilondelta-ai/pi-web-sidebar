@@ -7,6 +7,7 @@ import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState }
 import { applySidebarGrid, bindHeaderSidebarToggle, bindResizer, restoreSidebarLayout, routeWorkspace } from "./layout";
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
+import { sessionIsLive } from "./render-session-utils";
 import { readStoredObject, storeJson } from "./storage";
 import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR, WORKSPACE_CACHE_KEY } from "./constants";
 import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace, SubscriptionLike } from "./types";
@@ -328,12 +329,31 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   function applySessionChange(change: Record<string, unknown>): void {
     const sessionId: string = stringValue(change.sessionId) || stringValue(change.id);
     const name: string = stringValue(change.name) || stringValue(change.title);
+    const status: string = stringValue(change.status);
+    const live: boolean | undefined = booleanValue(change.live);
+    const patch: Partial<SidebarSession> = {};
 
-    if (!sessionId || !name) {
+    if (!sessionId) {
       return;
     }
 
-    workspaces = renameWorkspaceSession(workspaces, sessionId, name);
+    if (name) {
+      patch.name = normalizeSessionName(name);
+    }
+
+    if (status) {
+      patch.status = status;
+    }
+
+    if (live !== undefined) {
+      patch.live = live;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return;
+    }
+
+    workspaces = updateWorkspaceSession(workspaces, sessionId, patch);
     renderCurrentWorkspaces();
   }
 
@@ -780,13 +800,26 @@ function withoutWorkspaceSessions(
   return nextWorkspaces;
 }
 
-function renameWorkspaceSession(workspaces: SidebarWorkspace[], sessionId: string, name: string): SidebarWorkspace[] {
-  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => ({
-    ...workspace,
-    sessions: (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
-      return session.id === sessionId ? { ...session, name: normalizeSessionName(name) } : session;
-    }),
-  }));
+function updateWorkspaceSession(
+  workspaces: SidebarWorkspace[],
+  sessionId: string,
+  patch: Partial<SidebarSession>,
+): SidebarWorkspace[] {
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    if (!(workspace.sessions || []).some((session: SidebarSession): boolean => session.id === sessionId)) {
+      return workspace;
+    }
+
+    const sessions: SidebarSession[] = (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
+      return session.id === sessionId ? { ...session, ...patch } : session;
+    });
+
+    const live: boolean = patch.status !== undefined || patch.live !== undefined
+      ? workspaceHasLiveSession(sessions)
+      : !!workspace.live || workspaceHasLiveSession(sessions);
+
+    return { ...workspace, live, sessions };
+  });
 }
 
 function normalizeSessionName(name: string): string {
@@ -976,15 +1009,7 @@ function markSessionListActive(sessions: SidebarSession[], activeSessionId: stri
 }
 
 function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
-  return sessions.some((session): boolean => {
-    const status: string = (session.status || "").toLowerCase();
-
-    if (session.unreadCompleted || ["complete", "completed", "done", "failed", "success"].includes(status)) {
-      return false;
-    }
-
-    return !!(session.live || ["active", "live", "running", "thinking"].includes(status));
-  });
+  return sessions.some(sessionIsLive);
 }
 
 function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
@@ -1010,6 +1035,10 @@ function isOptimisticSessionId(sessionId: string): boolean {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function stringListValue(value: unknown): string[] {
