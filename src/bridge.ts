@@ -51,17 +51,22 @@ export function createSidebarBridge(
   function publishState(reason: string): void {
     latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
     const selected: SelectedSession | null = resolveSelectedSession(latestSnapshot);
-    persistSelectedSession(selected);
+    publishSelectedSession(selected, false);
     channels.state$.next(latestSnapshot);
     state$?.next(latestSnapshot);
+    publishEvent(channels, events$, { type: "state", reason, snapshot: latestSnapshot, detail: selected || {} });
+  }
 
-    if (!selectedSessionEqual(latestSelectedSession, selected)) {
-      latestSelectedSession = selected;
-      channels.selectedSession$.next(selected);
-      selectedSession$?.next(selected);
+  function publishSelectedSession(selected: SelectedSession | null, force: boolean): void {
+    persistSelectedSession(selected);
+
+    if (!force && selectedSessionEqual(latestSelectedSession, selected)) {
+      return;
     }
 
-    publishEvent(channels, events$, { type: "state", reason, snapshot: latestSnapshot, detail: selected || {} });
+    latestSelectedSession = selected;
+    channels.selectedSession$.next(selected);
+    selectedSession$?.next(selected);
   }
 
   return {
@@ -69,6 +74,12 @@ export function createSidebarBridge(
       publishState(reason);
     },
     emitEvent(type: string, detail: Record<string, unknown> = {}): void {
+      const selected: SelectedSession | null = selectedSessionFromDetail(detail);
+
+      if (type === "session.selected" && selected) {
+        publishSelectedSession(selected, true);
+      }
+
       publishEvent(channels, events$, { type, detail, snapshot: latestSnapshot });
     },
     updatePiStatus(status: PiStatus, reason: string): void {
@@ -135,6 +146,13 @@ function resolveSelectedSession(snapshot: SidebarSnapshot): SelectedSession | nu
 
 function selectedSessionEqual(previous: SelectedSession | null, next: SelectedSession | null): boolean {
   return previous?.sessionId === next?.sessionId && previous?.workspaceId === next?.workspaceId;
+}
+
+function selectedSessionFromDetail(detail: Record<string, unknown>): SelectedSession | null {
+  const sessionId: string = typeof detail.sessionId === "string" ? detail.sessionId : "";
+  const workspaceId: string = typeof detail.workspaceId === "string" ? detail.workspaceId : "";
+
+  return sessionId && workspaceId ? { sessionId, workspaceId } : null;
 }
 
 function readStoredString(key: string): string {

@@ -1162,6 +1162,43 @@ describe("pi-web-sidebar plugin", () => {
     expect(events.some((event) => event.type === "select-session")).toBe(false);
   });
 
+  test("same active and child session clicks publish explicit selectedSession", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "parent";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "child", name: "child", parentId: "parent", kind: "subagent" },
+      ],
+    }];
+    const controller = createSidebarController(app, testContext(app));
+    const selected: import("./src/types").SelectedSession[] = [];
+    controller.mount();
+    const subscription: SubscriptionLike = globalThis.piWebSidebar!.channels.selectedSession$.subscribe(
+      (value: import("./src/types").SelectedSession | null): void => {
+        if (value) {
+          selected.push(value);
+        }
+      },
+    );
+    await Promise.resolve();
+    selected.length = 0;
+
+    requireElement<HTMLElement>(app, "[data-session='parent']").click();
+    expect(selected.at(-1)).toEqual({ sessionId: "parent", workspaceId: "w1" });
+
+    requireElement<HTMLElement>(app, "[data-session='child']").click();
+    expect(selected.at(-1)).toEqual({ sessionId: "child", workspaceId: "w1" });
+    expect(localStorage.getItem("plugin.pi-web-sidebar.activeSessionId")).toBe("child");
+
+    subscription.unsubscribe();
+    controller.dispose();
+  });
+
   test("piWeb channels reconcile active id and session updates", async () => {
     installTestPiWeb();
     const app = setupApp();
