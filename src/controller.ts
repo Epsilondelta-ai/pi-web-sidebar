@@ -53,6 +53,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let sidebarSessionEventsCleanup: (() => void) | undefined;
   let pluginEventsCleanup: (() => void) | undefined;
   let chatStreamingCleanup: (() => void) | undefined;
+  let mounted: boolean = false;
   let chatStreamingSessionId: string = "";
   let chatStreamingTimer: ReturnType<typeof setTimeout> | undefined;
   let chatStreamingWatchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -87,6 +88,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       body.insertBefore(wrap, body.firstElementChild);
     }
 
+    mounted = true;
     bindMountedSidebar();
   }
 
@@ -119,6 +121,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function dispose(): void {
+    mounted = false;
     resetHostSidebarRenderState(app);
     resizeCleanup?.();
     resizeCleanup = undefined;
@@ -400,10 +403,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     sessionLiveRecheckTimer = setTimeout((): void => {
       sessionLiveRecheckTimer = undefined;
-      if (recheckStoredSessionLiveState()) {
-        renderCurrentWorkspaces();
-      }
-      scheduleSessionLiveRecheck(SESSION_LIVE_RECHECK_INTERVAL_MS);
+      void refreshCurrentWorkspaces().finally((): void => {
+        if (mounted) {
+          scheduleSessionLiveRecheck(SESSION_LIVE_RECHECK_INTERVAL_MS);
+        }
+      });
     }, delayMs);
   }
 
@@ -485,6 +489,9 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     renderCurrentWorkspaces();
     syncChatStreamingIndicator();
     scheduleChatStreamingSync();
+    if (sessionId) {
+      void refreshCurrentWorkspaces();
+    }
   }
 
   function setActiveSidebarSession(workspaceId: string, sessionId: string): void {

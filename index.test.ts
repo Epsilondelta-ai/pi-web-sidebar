@@ -1389,7 +1389,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
-  test("full stored live recheck runs every sixty seconds", () => {
+  test("full session live recheck refreshes backend state every sixty seconds", async () => {
     const app = setupApp();
     const originalSetTimeout: typeof globalThis.setTimeout = globalThis.setTimeout;
     const timers: { delay: number; handler: TimerHandler }[] = [];
@@ -1403,14 +1403,11 @@ describe("pi-web-sidebar plugin", () => {
     try {
       const controller = createSidebarController(app, testContext(app));
       controller.mount();
+      await Promise.resolve();
+      await Promise.resolve();
 
       expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
-      localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
-        sessions: [{
-          id: "s1",
-          messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
-        }],
-      }));
+      app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "scheduled", status: "running" }] }];
       const recheckTimer: { delay: number; handler: TimerHandler } | undefined = timers.find((timer): boolean => {
         return timer.delay === 60_000;
       });
@@ -1419,6 +1416,8 @@ describe("pi-web-sidebar plugin", () => {
       }
 
       recheckTimer.handler();
+      await Promise.resolve();
+      await Promise.resolve();
 
       expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
       expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();

@@ -254,7 +254,7 @@ func completedStatus(status string) bool {
 }
 
 func activeStatus(status string) bool {
-	return status == "active" || status == "live" || status == "running" || status == "streaming" || status == "thinking"
+	return status == "active" || status == "live" || status == "pending" || status == "running" || status == "streaming" || status == "thinking"
 }
 
 func inactiveStatus(status string) bool {
