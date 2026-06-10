@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -115,8 +116,9 @@ func sessionRecordFromFile(path string) map[string]any {
 			firstChatName = firstUserChatText(event)
 		}
 	}
-	if liveKnown, live := latestSessionLiveState(path); liveKnown {
-		if live {
+	tail := latestSessionTailState(path)
+	if tail.liveKnown {
+		if tail.live {
 			header["live"] = true
 			header["status"] = "streaming"
 		} else {
@@ -124,14 +126,20 @@ func sessionRecordFromFile(path string) map[string]any {
 			header["status"] = "idle"
 		}
 	}
+	if tail.renameName != "" {
+		header["name"] = tail.renameName
+	}
+	if metadataName := sessionRenameMetadataName(filepath.Dir(path), stringFromAny(header["id"])); metadataName != "" {
+		header["name"] = metadataName
+	}
 	mergeSessionName(header, firstChatName)
 	normalizeSessionRecord(header)
 	return header
 }
 
 func mergeCachedSessionRecord(cached map[string]any, valid map[string]any, preserveSessionState bool) map[string]any {
-	if strings.TrimSpace(stringFromAny(cached["name"])) == "" {
-		cached["name"] = sessionName(valid)
+	if validName := sessionName(valid); validName != "" {
+		cached["name"] = validName
 	}
 	if kind := strings.TrimSpace(stringFromAny(valid["kind"])); kind != "" {
 		cached["kind"] = kind
@@ -187,12 +195,56 @@ func sessionName(session map[string]any) string {
 	return strings.TrimSpace(stringFromAny(session["title"]))
 }
 
-func latestSessionLiveState(path string) (bool, bool) {
-	data, err := readSessionTail(path)
-	if err != nil {
-		return false, false
+func writeSessionRenameMetadata(sessionDir, sessionID, name string) error {
+	path := sessionRenameMetadataPath(sessionDir, sessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
 
+	payload, err := json.Marshal(request{"name": name})
+	if err != nil {
+		return err
+	}
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, append(payload, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
+}
+
+func sessionRenameMetadataName(sessionDir, sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	data, err := os.ReadFile(sessionRenameMetadataPath(sessionDir, sessionID))
+	if err != nil {
+		return ""
+	}
+	var metadata request
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stringFromAny(metadata["name"]))
+}
+
+func sessionRenameMetadataPath(sessionDir, sessionID string) string {
+	name := base64.RawURLEncoding.EncodeToString([]byte(sessionID)) + ".json"
+	return filepath.Join(sessionDir, ".pi-web-sidebar-renames", name)
+}
+
+type sessionTailState struct {
+	liveKnown  bool
+	live       bool
+	renameName string
+}
+
+func latestSessionTailState(path string) sessionTailState {
+	data, err := readSessionTail(path)
+	if err != nil {
+		return sessionTailState{}
+	}
+
+	state := sessionTailState{}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -204,11 +256,17 @@ func latestSessionLiveState(path string) (bool, bool) {
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			continue
 		}
-		if liveKnown, live := sessionRecordLiveState(event); liveKnown {
-			return true, live
+		if state.renameName == "" && event["type"] == "session_rename" {
+			state.renameName = strings.TrimSpace(stringFromAny(event["name"]))
+		}
+		if !state.liveKnown {
+			state.liveKnown, state.live = sessionRecordLiveState(event)
+		}
+		if state.liveKnown && state.renameName != "" {
+			return state
 		}
 	}
-	return false, false
+	return state
 }
 
 func readSessionTail(path string) ([]byte, error) {

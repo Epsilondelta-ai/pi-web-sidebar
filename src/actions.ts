@@ -8,9 +8,17 @@ import {
 import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
 import { collapseSidebarLayout, routeWorkspace } from "./layout";
 import { markSelectedSession } from "./render";
-import type { AppElement, PluginContext, SidebarBridge, SidebarSession, SidebarWorkspace } from "./types";
+import type {
+  AppElement,
+  PluginContext,
+  SessionRenameResponse,
+  SidebarBridge,
+  SidebarSession,
+  SidebarWorkspace,
+} from "./types";
 
 type RefreshWorkspaces = (options?: { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string }) => Promise<SidebarWorkspace[]>;
+type RenamedSession = SidebarSession & { workspaceId: string };
 
 export function bindWorkspaceActions(
   wrap: HTMLElement,
@@ -209,9 +217,31 @@ async function handleSessionAction(
   }
 
   if (action === "rename-session") {
-    await renameSidebarSession(app, target.closest(".session-row"));
+    let renamedSession: RenamedSession | null = null;
+
+    try {
+      renamedSession = await renameSidebarSession(
+        app,
+        context,
+        target.closest(".session-row"),
+      );
+    } catch (error) {
+      console.warn("pi-web-sidebar failed to rename session", error);
+      globalThis.alert?.(`Failed to rename session: ${error instanceof Error ? error.message : String(error)}`);
+      return true;
+    }
+
+    if (!renamedSession) {
+      return true;
+    }
+
+    applyRenamedSession(app, renamedSession);
+    publishSessionChanged(renamedSession);
     await refreshWorkspaces();
-    sidebarBridge.emitEvent("rename-session", { sessionId: target.closest<HTMLElement>(".session-row")?.dataset.session || "" });
+    sidebarBridge.emitEvent("rename-session", {
+      sessionId: renamedSession.id,
+      workspaceId: renamedSession.workspaceId || "",
+    });
     sidebarBridge.emitState("rename-session");
     return true;
   }
@@ -274,18 +304,59 @@ function closeSessionMenus(app: AppElement, except?: HTMLElement): void {
   });
 }
 
-async function renameSidebarSession(app: AppElement, row: Element | null): Promise<void> {
+async function renameSidebarSession(
+  app: AppElement,
+  context: PluginContext,
+  row: Element | null,
+): Promise<RenamedSession | null> {
   if (!row) {
-    return;
+    return null;
   }
 
   const htmlRow: HTMLElement = row as HTMLElement;
-  const sessionId: string | undefined = htmlRow.dataset.session;
-  if (!sessionId) {
-    return;
+  const sessionId: string = htmlRow.dataset.session || "";
+  const workspaceId: string = htmlRow.dataset.workspace || "";
+  const currentName: string = htmlRow.dataset.fullTitle || htmlRow.dataset.title || sessionId;
+
+  if (!sessionId || !workspaceId) {
+    return null;
   }
 
-  await renameSessionById(app, sessionId);
+  const nextName: string = prompt("Rename session", currentName)?.trim() || "";
+
+  if (!nextName || nextName === currentName) {
+    return null;
+  }
+
+  const response: SessionRenameResponse = await renameSessionById(app, context, workspaceId, sessionId, nextName);
+  const responseName: string = response.session?.name?.trim() || nextName;
+  return { id: sessionId, name: responseName, workspaceId };
+}
+
+function applyRenamedSession(app: AppElement, renamedSession: RenamedSession): void {
+  app.workspaceList = (app.workspaceList || []).map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    if (workspace.id !== renamedSession.workspaceId) {
+      return workspace;
+    }
+
+    return {
+      ...workspace,
+      sessions: (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
+        if (session.id !== renamedSession.id) {
+          return session;
+        }
+
+        return { ...session, name: renamedSession.name };
+      }),
+    };
+  });
+}
+
+function publishSessionChanged(session: SidebarSession): void {
+  globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({
+    name: session.name,
+    sessionId: session.id,
+  });
 }
 
 async function deleteSidebarSession(app: AppElement, context: PluginContext, row: Element | null): Promise<SidebarSession[]> {

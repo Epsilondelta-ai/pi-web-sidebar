@@ -107,7 +107,7 @@ export type AppElement = HTMLElement & {
   deleteWorkspace?: (workspaceId: string) => Promise<void>;
   deleteWorkspaceSessions?: (workspaceId: string) => Promise<void>;
   newSession?: (workspaceId: string) => Promise<unknown>;
-  renameSession?: (sessionId: string) => Promise<void>;
+  renameSession?: (sessionId: string, name?: string) => Promise<void>;
   deleteSession?: (sessionId: string) => Promise<void>;
 };
 

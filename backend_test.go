@@ -150,6 +150,74 @@ func TestLoadWorkspaceCachePrunesMissingSessions(t *testing.T) {
 	}
 }
 
+func TestRenameSessionPersistsMetadataWithoutRewritingSessionLog(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	sessionPath := filepath.Join(sessionDir, "real.jsonl")
+	sessionData := []byte(`{"id":"real","title":"old title"}` + "\n" + `{"type":"message","text":"keep"}` + "\n")
+	if err := os.WriteFile(sessionPath, sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[{"id":"real","name":"old title"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := renameSession("w1", "real", " new name ")
+	if err != nil {
+		t.Fatalf("renameSession error = %v", err)
+	}
+	if result["sessionId"] != "real" || result["workspaceId"] != "w1" {
+		t.Fatalf("result = %v, want renamed session metadata", result)
+	}
+
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatalf("read session file: %v", err)
+	}
+	text := string(data)
+	if text != string(sessionData) {
+		t.Fatalf("session file = %s, want log unchanged", text)
+	}
+
+	filler := strings.Repeat("x", 70*1024)
+	if err := os.WriteFile(sessionPath, append(sessionData, []byte(`{"type":"message","text":"`+filler+`"}`+"\n")...), 0o600); err != nil {
+		t.Fatalf("write large session file: %v", err)
+	}
+
+	session := sessionRecordFromFile(sessionPath)
+	if session["name"] != "new name" {
+		t.Fatalf("session = %v, want renamed name", session)
+	}
+	if _, ok := session["title"]; ok {
+		t.Fatalf("session = %v, want no normalized title", session)
+	}
+
+	validated := loadValidatedWorkspaceCacheForTest(t)
+	cachedSession := validated["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)[0].(map[string]any)
+	if cachedSession["name"] != "new name" {
+		t.Fatalf("cached session = %v, want renamed name", cachedSession)
+	}
+}
+
 func TestCreateSessionWritesPrivatePiSessionFile(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
@@ -250,8 +318,8 @@ func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
 func TestLoadWorkspaceCacheDecoratesTeamAgentSessions(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(filepath.Join(workspace, ".pi", "sessions"), 0o755); err != nil {
-		t.Fatalf("create project sessions: %v", err)
+	if err := os.MkdirAll(filepath.Join(workspace, ".pi"), 0o755); err != nil {
+		t.Fatalf("create project pi dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, ".pi", "settings.json"), []byte(`{"sessionDir":".pi/sessions"}`), 0o600); err != nil {
 		t.Fatalf("write settings: %v", err)
@@ -326,6 +394,14 @@ func TestLoadWorkspaceCacheDecoratesTeamAgentSessions(t *testing.T) {
 	}
 	if teamSessionRecord["name"] != "pi agent teams - teammate Emilia" {
 		t.Fatalf("teamSessionRecord name = %v, want teammate session name", teamSessionRecord["name"])
+	}
+
+	if _, err := renameSession("w1", "team-child", "Renamed team agent"); err != nil {
+		t.Fatalf("renameSession team agent error = %v", err)
+	}
+	renamed := sessionRecordFromFile(teamSessionPath)
+	if renamed["name"] != "Renamed team agent" {
+		t.Fatalf("renamed team session = %v, want sidecar name", renamed)
 	}
 }
 
@@ -971,6 +1047,14 @@ func TestDeleteSessionsRemovesSelectedSessionFiles(t *testing.T) {
 	if err := os.WriteFile(keepFile, []byte(`{"id":"keep-me"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write keep file: %v", err)
 	}
+	if err := writeSessionRenameMetadata(sessionDir, "delete-me", "renamed delete"); err != nil {
+		t.Fatalf("write delete rename metadata: %v", err)
+	}
+	if err := writeSessionRenameMetadata(sessionDir, "keep-me", "renamed keep"); err != nil {
+		t.Fatalf("write keep rename metadata: %v", err)
+	}
+	deleteMetadata := sessionRenameMetadataPath(sessionDir, "delete-me")
+	keepMetadata := sessionRenameMetadataPath(sessionDir, "keep-me")
 	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("create cache dir: %v", err)
@@ -995,6 +1079,12 @@ func TestDeleteSessionsRemovesSelectedSessionFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(keepFile); err != nil {
 		t.Fatalf("keep file missing: %v", err)
+	}
+	if _, err := os.Stat(deleteMetadata); !os.IsNotExist(err) {
+		t.Fatalf("delete metadata still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(keepMetadata); err != nil {
+		t.Fatalf("keep metadata missing: %v", err)
 	}
 }
 

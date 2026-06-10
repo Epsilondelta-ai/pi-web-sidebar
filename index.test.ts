@@ -1999,6 +1999,86 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("new title");
   });
 
+  test("session menu rename prompts and persists through backend", async () => {
+    const app = setupApp();
+    const backendCalls: BackendCallLog[] = [];
+    const changedPayloads: Record<string, unknown>[] = [];
+    const oldName = "old session name is long";
+    globalThis.prompt = (message?: string, defaultValue?: string): string => {
+      expect(message).toBe("Rename session");
+      expect(defaultValue).toBe(oldName);
+      return "new name";
+    };
+    globalThis.piWeb!.subject<Record<string, unknown>>("session.changed").subscribe((payload) => {
+      changedPayloads.push(payload);
+    });
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: oldName }] }];
+    const controller = createSidebarController(app, testContext(app, {
+      backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
+        backendCalls.push({ method, options });
+
+        if (method === "rename-session") {
+          return { session: { id: "s1", name: options.data?.name } };
+        }
+
+        return {};
+      },
+    }));
+
+    controller.mount();
+    await Promise.resolve();
+    requireElement(app, "[data-session='s1'] [data-action='session-menu-toggle']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-session='s1'] [data-action='rename-session']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(backendCalls.some((call: BackendCallLog): boolean => {
+      return call.method === "rename-session"
+        && call.options.data?.workspaceId === "w1"
+        && call.options.data?.sessionId === "s1"
+        && call.options.data?.name === "new name";
+    })).toBe(true);
+    expect(changedPayloads.at(-1)).toEqual({ name: "new name", sessionId: "s1" });
+    expect(app.workspaceList?.[0]?.sessions?.[0]?.name).toBe("new name");
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("new name");
+  });
+
+  test("session menu rename keeps UI unchanged when backend fails", async () => {
+    const app = setupApp();
+    const changedPayloads: Record<string, unknown>[] = [];
+    globalThis.prompt = (): string => "new name";
+    globalThis.piWeb!.subject<Record<string, unknown>>("session.changed").subscribe((payload) => {
+      changedPayloads.push(payload);
+    });
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "old name" }] }];
+    const controller = createSidebarController(app, testContext(app, {
+      backend: async (method: string): Promise<unknown> => {
+        if (method === "rename-session") {
+          throw new Error("disk full");
+        }
+
+        return {};
+      },
+    }));
+
+    controller.mount();
+    await Promise.resolve();
+    requireElement(app, "[data-session='s1'] [data-action='session-menu-toggle']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-session='s1'] [data-action='rename-session']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
+
+    expect(changedPayloads).toEqual([]);
+    expect(app.workspaceList?.[0]?.sessions?.[0]?.name).toBe("old name");
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("old name");
+  });
+
   test("adds fallback grip handles to plugin-rendered rows", async () => {
     const app = setupApp();
     app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "one" }] }];

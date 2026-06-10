@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -71,6 +72,56 @@ func createSession(workspaceID string) (request, error) {
 
 func newSessionID() string {
 	return fmt.Sprintf("sidebar-%d", time.Now().UnixNano())
+}
+
+func renameSession(workspaceID, sessionID, name string) (request, error) {
+	workspacePath, err := workspacePathFromCache(workspaceID)
+	if err != nil {
+		return request{}, err
+	}
+	cleanName := strings.TrimSpace(name)
+	if sessionID == "" || cleanName == "" {
+		return request{}, errors.New("session id and name are required")
+	}
+
+	sessionDir := piSessionDirForCWD(workspacePath)
+	if sessionDir == "" {
+		return request{}, errors.New("session dir is empty")
+	}
+
+	sessionPath, err := sessionFilePathForID(sessionDir, sessionID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return request{}, err
+	}
+	if sessionPath == "" {
+		sessionPath = teamSessionFileForWorkspace(workspacePath, sessionID)
+	}
+	if sessionPath == "" {
+		return request{}, errors.New("session not found")
+	}
+	if err := writeSessionRenameMetadata(filepath.Dir(sessionPath), sessionID, cleanName); err != nil {
+		return request{}, err
+	}
+
+	return request{"session": request{"id": sessionID, "name": cleanName}, "sessionId": sessionID, "workspaceId": workspaceID}, nil
+}
+
+func sessionFilePathForID(sessionDir, sessionID string) (string, error) {
+	foundPath := ""
+	err := filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".jsonl" || foundPath != "" {
+			return nil
+		}
+		if sessionIDFromFile(path) == sessionID {
+			foundPath = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return foundPath, err
 }
 
 func deleteSessions(workspaceID string, sessionIDs []string) (request, error) {
@@ -181,6 +232,9 @@ func removeSessionFiles(sessionDir string, deleteSet map[string]bool) ([]string,
 	if err := removeSyntheticSessionDirs(sessionDir, deleteSet); err != nil {
 		return nil, err
 	}
+	if err := removeSessionRenameMetadataFiles(sessionDir, deleteSet); err != nil {
+		return nil, err
+	}
 
 	return sortedDeletedSessionIDs(deleteSet), nil
 }
@@ -204,6 +258,15 @@ func removeSyntheticSessionDirs(sessionDir string, deleteSet map[string]bool) er
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(sessionDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeSessionRenameMetadataFiles(sessionDir string, deleteSet map[string]bool) error {
+	for sessionID := range deleteSet {
+		if err := os.Remove(sessionRenameMetadataPath(sessionDir, sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

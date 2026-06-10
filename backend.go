@@ -71,6 +71,8 @@ func main() {
 		result, err = deleteSessions(stringInput(data, "workspaceId"), stringListInput(data, "sessionIds"))
 	case "create-session":
 		result, err = createSession(stringInput(data, "workspaceId"))
+	case "rename-session":
+		result, err = renameSession(stringInput(data, "workspaceId"), stringInput(data, "sessionId"), stringInput(data, "name"))
 	case "pi-status":
 		result, err = checkPiStatus()
 	default:
