@@ -229,12 +229,15 @@ async function handleSessionAction(
   }
 
   if (action === "select-session") {
+    const forceSelection: boolean = app.dataset.activeSessionId === (target.dataset.session || "")
+      && app.dataset.activeWorkspaceId === (target.dataset.workspace || "");
     markSelectedSession(target, app);
     markSelectedWorkspace(target, app);
     persistSelectedSession(target, app);
     publishSelectedSession(target);
     routeWorkspace(app);
     const detail: Record<string, unknown> = {
+      forceSelection,
       sessionId: target.dataset.session || "",
       workspaceId: target.dataset.workspace || "",
     };

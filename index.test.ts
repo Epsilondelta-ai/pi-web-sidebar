@@ -1162,6 +1162,35 @@ describe("pi-web-sidebar plugin", () => {
     expect(events.some((event) => event.type === "select-session")).toBe(false);
   });
 
+  test("cross-workspace click publishes selectedSession after snapshot updates", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "one" }] },
+      { id: "w2", name: "two", path: "/two", sessions: [{ id: "s2", name: "two" }] },
+    ];
+    const controller = createSidebarController(app, testContext(app));
+    const emittedSnapshots: string[] = [];
+    controller.mount();
+    const subscription: SubscriptionLike = globalThis.piWebSidebar!.channels.selectedSession$.subscribe(
+      (value: import("./src/types").SelectedSession | null): void => {
+        if (value?.sessionId === "s2") {
+          emittedSnapshots.push(globalThis.piWebSidebar!.getSnapshot().activeWorkspaceId);
+        }
+      },
+    );
+    await Promise.resolve();
+
+    requireElement<HTMLElement>(app, "[data-session='s2']").click();
+
+    expect(emittedSnapshots).toEqual(["w2"]);
+    expect(globalThis.piWebSidebar!.getSnapshot().activeWorkspaceId).toBe("w2");
+
+    subscription.unsubscribe();
+    controller.dispose();
+  });
+
   test("same active and child session clicks publish explicit selectedSession", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "parent";

@@ -77,7 +77,9 @@ export function createSidebarBridge(
       const selected: SelectedSession | null = selectedSessionFromDetail(detail);
 
       if (type === "session.selected" && selected) {
-        publishSelectedSession(selected, true);
+        const forceSelection: boolean = detail.forceSelection === true;
+        latestSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
+        publishSelectedSession(selected, forceSelection);
       }
 
       publishEvent(channels, events$, { type, detail, snapshot: latestSnapshot });
