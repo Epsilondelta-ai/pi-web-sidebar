@@ -9,6 +9,7 @@ import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { sessionIsLive } from "./render-session-utils";
 import { readStoredObject, storeJson } from "./storage";
+import { cleanupTopbarCrumb } from "./topbar-crumb";
 import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR, WORKSPACE_CACHE_KEY } from "./constants";
 import type { AppElement, DragItem, PluginContext, SidebarController, SidebarSession, SidebarWorkspace, SubscriptionLike } from "./types";
 
@@ -157,6 +158,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
     clearHostWorkspaceRecheck();
     app.querySelector("[data-pi-web-sidebar-picker]")?.remove();
+    cleanupTopbarCrumb(app);
     wrap?.remove();
 
     wrap = null;
