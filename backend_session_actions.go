@@ -11,7 +11,10 @@ import (
 )
 
 func validateWorkspaces(data request) (request, error) {
-	return validateWorkspaceCache(request{"workspaces": data["workspaces"]}), nil
+	return validateWorkspaceCache(request{
+		"preserveSessionState": data["preserveSessionState"],
+		"workspaces":           data["workspaces"],
+	}), nil
 }
 
 func saveWorkspaceCache(data request) (request, error) {
@@ -251,5 +254,9 @@ func completedStatus(status string) bool {
 }
 
 func activeStatus(status string) bool {
-	return status == "active" || status == "live" || status == "running" || status == "thinking"
+	return status == "active" || status == "live" || status == "pending" || status == "running" || status == "streaming" || status == "thinking"
+}
+
+func inactiveStatus(status string) bool {
+	return status == "idle" || status == "inactive" || status == "waiting"
 }

@@ -115,12 +115,21 @@ func sessionRecordFromFile(path string) map[string]any {
 			firstChatName = firstUserChatText(event)
 		}
 	}
+	if liveKnown, live := latestSessionLiveState(path); liveKnown {
+		if live {
+			header["live"] = true
+			header["status"] = "streaming"
+		} else {
+			delete(header, "live")
+			header["status"] = "idle"
+		}
+	}
 	mergeSessionName(header, firstChatName)
 	normalizeSessionRecord(header)
 	return header
 }
 
-func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[string]any {
+func mergeCachedSessionRecord(cached map[string]any, valid map[string]any, preserveSessionState bool) map[string]any {
 	if strings.TrimSpace(stringFromAny(cached["name"])) == "" {
 		cached["name"] = sessionName(valid)
 	}
@@ -135,6 +144,19 @@ func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[s
 		delete(cached, "parentId")
 	}
 	delete(cached, "__sessionInfoName")
+	if !preserveSessionState {
+		delete(cached, "live")
+		delete(cached, "status")
+	}
+	if status := strings.TrimSpace(stringFromAny(valid["status"])); status != "" {
+		cached["status"] = status
+		if inactiveStatus(strings.ToLower(status)) || completedStatus(strings.ToLower(status)) {
+			delete(cached, "live")
+		}
+	}
+	if valid["live"] == true {
+		cached["live"] = true
+	}
 	normalizeSessionRecord(cached)
 	return cached
 }
@@ -163,6 +185,112 @@ func sessionName(session map[string]any) string {
 		return name
 	}
 	return strings.TrimSpace(stringFromAny(session["title"]))
+}
+
+func latestSessionLiveState(path string) (bool, bool) {
+	data, err := readSessionTail(path)
+	if err != nil {
+		return false, false
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if liveKnown, live := sessionRecordLiveState(event); liveKnown {
+			return true, live
+		}
+	}
+	return false, false
+}
+
+func readSessionTail(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	const maxTailBytes int64 = 64 * 1024
+	size := info.Size()
+	start := int64(0)
+	if size > maxTailBytes {
+		start = size - maxTailBytes
+	}
+
+	data := make([]byte, size-start)
+	_, err = file.ReadAt(data, start)
+	if err != nil {
+		return nil, err
+	}
+	if start > 0 {
+		if index := strings.IndexByte(string(data), '\n'); index >= 0 && index+1 < len(data) {
+			data = data[index+1:]
+		}
+	}
+	return data, nil
+}
+
+func sessionRecordLiveState(value any) (bool, bool) {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return false, false
+	}
+
+	status := strings.ToLower(strings.TrimSpace(stringFromAny(item["status"])))
+	if completedStatus(status) || inactiveStatus(status) || status == "ok" {
+		return true, false
+	}
+	if activeStatus(status) || status == "streaming" {
+		return true, true
+	}
+
+	role := strings.ToLower(strings.TrimSpace(stringFromAny(item["role"])))
+	stopReason := strings.ToLower(strings.TrimSpace(stringFromAny(item["stopReason"])))
+	if role == "user" || role == "toolresult" || stopReason == "tooluse" {
+		return true, true
+	}
+	if role == "assistant" && (stopReason == "stop" || stopReason == "error" || stopReason == "aborted" || stopReason == "length") {
+		return true, false
+	}
+
+	known := false
+	live := false
+	for _, child := range item {
+		switch typedChild := child.(type) {
+		case map[string]any:
+			if childKnown, childLive := sessionRecordLiveState(typedChild); childKnown {
+				known = true
+				if !childLive {
+					return true, false
+				}
+				live = true
+			}
+		case []any:
+			for _, listItem := range typedChild {
+				if childKnown, childLive := sessionRecordLiveState(listItem); childKnown {
+					known = true
+					if !childLive {
+						return true, false
+					}
+					live = true
+				}
+			}
+		}
+	}
+	return known, live
 }
 
 func firstUserChatText(event map[string]any) string {
@@ -251,7 +379,7 @@ func workspaceHasLiveSession(sessions []any) bool {
 		}
 
 		status := strings.ToLower(strings.TrimSpace(stringFromAny(session["status"])))
-		if session["unreadCompleted"] == true || completedStatus(status) {
+		if session["unreadCompleted"] == true || completedStatus(status) || inactiveStatus(status) {
 			continue
 		}
 		if session["live"] == true || activeStatus(status) {

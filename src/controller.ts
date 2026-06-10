@@ -43,6 +43,7 @@ const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
 const CHAT_SESSION_STORAGE_KEY = "pi-web-chat.sessions.v1";
 const CHAT_STREAMING_FAST_WATCH_LIMIT = 20;
 const CHAT_STREAMING_WATCH_INTERVAL_MS = 250;
+const SESSION_LIVE_RECHECK_INTERVAL_MS = 60_000;
 
 export function createSidebarController(app: AppElement, context: PluginContext = {}): SidebarController {
   let wrap: HTMLElement | null = null;
@@ -52,11 +53,14 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let sidebarSessionEventsCleanup: (() => void) | undefined;
   let pluginEventsCleanup: (() => void) | undefined;
   let chatStreamingCleanup: (() => void) | undefined;
+  let mounted: boolean = false;
   let chatStreamingSessionId: string = "";
   let chatStreamingTimer: ReturnType<typeof setTimeout> | undefined;
   let chatStreamingWatchTimer: ReturnType<typeof setTimeout> | undefined;
+  let sessionLiveRecheckTimer: ReturnType<typeof setTimeout> | undefined;
   let chatStreamingWatchAttempts: number = 0;
   let chatStreamingSnapshots: Record<string, ChatStreamingSessionSnapshot> = {};
+  let storedStreamingSnapshots: Record<string, ChatStreamingSessionSnapshot> = {};
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let hostWorkspaceRecheckTimer: ReturnType<typeof setTimeout> | undefined;
@@ -84,6 +88,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       body.insertBefore(wrap, body.firstElementChild);
     }
 
+    mounted = true;
     bindMountedSidebar();
   }
 
@@ -103,6 +108,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindPluginEventChannels();
     bindPiWebChannels();
     bindChatStreamingObserver();
+    recheckStoredSessionLiveState();
     renderCurrentWorkspaces();
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
@@ -111,9 +117,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     void refreshPiStatus();
     void refreshCurrentWorkspaces();
     scheduleHostWorkspaceRecheck(HOST_WORKSPACE_RECHECK_INTERVAL_MS);
+    scheduleSessionLiveRecheck(SESSION_LIVE_RECHECK_INTERVAL_MS);
   }
 
   function dispose(): void {
+    mounted = false;
     resetHostSidebarRenderState(app);
     resizeCleanup?.();
     resizeCleanup = undefined;
@@ -134,8 +142,13 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       clearTimeout(chatStreamingWatchTimer);
       chatStreamingWatchTimer = undefined;
     }
+    if (sessionLiveRecheckTimer) {
+      clearTimeout(sessionLiveRecheckTimer);
+      sessionLiveRecheckTimer = undefined;
+    }
     chatStreamingWatchAttempts = 0;
     chatStreamingSnapshots = {};
+    storedStreamingSnapshots = {};
     channelSubscriptions.forEach((subscription: SubscriptionLike): void => subscription.unsubscribe());
     channelSubscriptions = [];
     if (refreshTimer) {
@@ -368,8 +381,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     return session?.live === true && session.status === "streaming";
   }
 
-  function scheduleChatStreamingWatch(): void {
-    if (!chatStreamingSessionId || chatStreamingWatchTimer) {
+  function scheduleChatStreamingWatch(domStreaming: boolean): void {
+    if (!domStreaming || !chatStreamingSessionId || chatStreamingWatchTimer) {
       return;
     }
 
@@ -383,11 +396,57 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }, delayMs);
   }
 
+  function scheduleSessionLiveRecheck(delayMs: number): void {
+    if (sessionLiveRecheckTimer) {
+      clearTimeout(sessionLiveRecheckTimer);
+    }
+
+    sessionLiveRecheckTimer = setTimeout((): void => {
+      sessionLiveRecheckTimer = undefined;
+      void refreshCurrentWorkspaces().finally((): void => {
+        if (mounted) {
+          scheduleSessionLiveRecheck(SESSION_LIVE_RECHECK_INTERVAL_MS);
+        }
+      });
+    }, delayMs);
+  }
+
+  function recheckStoredSessionLiveState(sessionId?: string): boolean {
+    const liveSessionIds: Set<string> = new Set(storedChatStreamingSessionIds());
+    const targetIds: Set<string> = sessionId
+      ? new Set([sessionId])
+      : new Set([...liveSessionIds, ...Object.keys(storedStreamingSnapshots)]);
+    let changed: boolean = false;
+
+    for (const targetId of targetIds) {
+      if (liveSessionIds.has(targetId)) {
+        if (!storedStreamingSnapshots[targetId]) {
+          storedStreamingSnapshots = {
+            ...storedStreamingSnapshots,
+            [targetId]: snapshotSession(workspaces, app.workspaceList || [], targetId),
+          };
+        }
+
+        if (!chatStreamingSessionIsMarked(targetId)) {
+          workspaces = updateWorkspaceSession(workspaces, targetId, { live: true, status: "streaming" });
+          changed = true;
+        }
+      } else if (storedStreamingSnapshots[targetId]) {
+        const snapshot: ChatStreamingSessionSnapshot = storedStreamingSnapshots[targetId] || { live: false, status: "idle" };
+        workspaces = updateWorkspaceSession(workspaces, targetId, snapshot);
+        delete storedStreamingSnapshots[targetId];
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
   function syncChatStreamingIndicator(): void {
     const storedStreamingSessionId: string = storedChatStreamingSessionId();
-    const streaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
-      .some((element: Element): boolean => element.isConnected) || !!storedStreamingSessionId;
-    const nextSessionId: string = streaming ? app.dataset.activeSessionId || storedStreamingSessionId : "";
+    const domStreaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
+      .some((element: Element): boolean => element.isConnected);
+    const nextSessionId: string = domStreaming ? app.dataset.activeSessionId || storedStreamingSessionId : storedStreamingSessionId;
     const previousSessionId: string = chatStreamingSessionId;
 
     if (previousSessionId === nextSessionId) {
@@ -398,7 +457,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
           renderCurrentWorkspaces();
         }
 
-        scheduleChatStreamingWatch();
+        scheduleChatStreamingWatch(domStreaming);
       }
 
       return;
@@ -415,7 +474,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     chatStreamingSessionId = nextSessionId;
     chatStreamingWatchAttempts = 0;
     renderCurrentWorkspaces();
-    scheduleChatStreamingWatch();
+    scheduleChatStreamingWatch(domStreaming);
   }
 
   function applyActiveSession(sessionId: string | null): void {
@@ -426,9 +485,13 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     app.dataset.activeSessionId = sessionId || "";
     reconcileActiveWorkspace();
     storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
+    recheckStoredSessionLiveState(app.dataset.activeSessionId || "");
     renderCurrentWorkspaces();
     syncChatStreamingIndicator();
     scheduleChatStreamingSync();
+    if (sessionId) {
+      void refreshCurrentWorkspaces();
+    }
   }
 
   function setActiveSidebarSession(workspaceId: string, sessionId: string): void {
@@ -610,7 +673,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       }
 
       const directWorkspaces: SidebarWorkspace[] = directWorkspaceList();
-      if (directWorkspaces.length > 0 && workspaceContentSignature(directWorkspaces) !== workspaceContentSignature(workspaces)) {
+      const storedStreamingSessionIds: Set<string> = new Set(storedChatStreamingSessionIds());
+      if (
+        directWorkspaces.length > 0 &&
+        workspaceContentSignature(directWorkspaces, storedStreamingSessionIds) !==
+          workspaceContentSignature(workspaces, storedStreamingSessionIds)
+      ) {
         hostWorkspaceRecheckAttempts = 0;
         void refreshCurrentWorkspaces();
       }
@@ -709,11 +777,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       optimisticSessionsByWorkspace,
       refreshedWorkspaces,
     );
-    workspaces = applyStoredChatStreamingIndicator(clearWorkspaceSessionsById(
+    workspaces = clearWorkspaceSessionsById(
       mergeOptimisticSessions(refreshedWorkspaces, optimisticSessionsByWorkspace),
       clearedSessionWorkspaceIds,
       app,
-    ));
+    );
+    recheckStoredSessionLiveState();
     if (chatStreamingSessionId) {
       chatStreamingSnapshots = {
         ...chatStreamingSnapshots,
@@ -1053,30 +1122,26 @@ function snapshotSession(
   return { live: session?.live, status: session?.status };
 }
 
-function applyStoredChatStreamingIndicator(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
-  const sessionId: string = storedChatStreamingSessionId();
-  return sessionId ? updateWorkspaceSession(workspaces, sessionId, { live: true, status: "streaming" }) : workspaces;
+function storedChatStreamingSessionId(): string {
+  return storedChatStreamingSessionIds()[0] || "";
 }
 
-function storedChatStreamingSessionId(): string {
+function storedChatStreamingSessionIds(): string[] {
   const storedChatSessions: unknown = readStoredChatSessions();
 
   if (!isRecord(storedChatSessions)) {
-    return "";
+    return [];
   }
 
-  const activeSessionId: string = stringValue(storedChatSessions.activeSessionId);
   const sessions: unknown = storedChatSessions.sessions;
-
-  if (!activeSessionId || !Array.isArray(sessions)) {
-    return "";
+  if (!Array.isArray(sessions)) {
+    return [];
   }
 
-  const activeSession: unknown = sessions.find((session: unknown): boolean => {
-    return isRecord(session) && stringValue(session.id) === activeSessionId;
-  });
-
-  return chatSessionIsStreaming(activeSession) ? activeSessionId : "";
+  return sessions
+    .filter((session: unknown): boolean => chatSessionIsStreaming(session))
+    .map((session: unknown): string => isRecord(session) ? stringValue(session.id) : "")
+    .filter((sessionId: string): boolean => sessionId !== "");
 }
 
 function readStoredChatSessions(): unknown {
@@ -1345,10 +1410,14 @@ function workspaceHasLiveSession(sessions: SidebarSession[]): boolean {
   return sessions.some(sessionIsLive);
 }
 
-function workspaceContentSignature(workspaces: SidebarWorkspace[]): string {
+function workspaceContentSignature(
+  workspaces: SidebarWorkspace[],
+  ignoredStatusSessionIds: Set<string> = new Set(),
+): string {
   return workspaces.map((workspace: SidebarWorkspace): string => {
     const sessions: string = (workspace.sessions || []).map((session: SidebarSession): string => {
-      return [session.id, session.name || "", session.status || "", session.kind || ""].join("/");
+      const status: string = ignoredStatusSessionIds.has(session.id) ? "" : session.status || "";
+      return [session.id, session.name || "", status, session.kind || ""].join("/");
     }).join(",");
 
     return [workspace.id, workspace.name || "", workspace.path || "", workspace.sessionCount || 0, sessions].join(":");

@@ -615,6 +615,260 @@ func TestLoadWorkspaceCacheUpdatesCachedSessionMissingName(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceCacheMarksWaitingSessionLive(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	sessionData := []byte(
+		`{"id":"real","name":"real chat"}` + "\n" +
+			`{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","name":"subagent"}]}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[{"id":"real"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != true || session["live"] != true || session["status"] != "streaming" {
+		t.Fatalf("workspace = %v session = %v, want live waiting session", workspaceCache, session)
+	}
+}
+
+func TestLoadWorkspaceCacheClearsHistoricalWaitingAfterFinalAssistant(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	sessionData := []byte(
+		`{"id":"real","name":"real chat"}` + "\n" +
+			`{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","name":"subagent"}]}` + "\n" +
+			`{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"done"}]}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":[{"id":"real"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != false || session["live"] == true || session["status"] == "streaming" {
+		t.Fatalf("workspace = %v session = %v, want historical waiting cleared", workspaceCache, session)
+	}
+}
+
+func TestValidateWorkspacesMergesFileLiveStateIntoDirectSessions(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	sessionData := []byte(
+		`{"id":"real","name":"real chat"}` + "\n" +
+			`{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","name":"subagent"}]}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := validateWorkspaces(request{
+		"preserveSessionState": true,
+		"workspaces": []any{map[string]any{
+			"id":       "w1",
+			"path":     workspace,
+			"sessions": []any{map[string]any{"id": "real", "status": "idle"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("validateWorkspaces error = %v", err)
+	}
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != true || session["live"] != true || session["status"] != "streaming" {
+		t.Fatalf("workspace = %v session = %v, want file live merged into direct session", workspaceCache, session)
+	}
+}
+
+func TestLoadWorkspaceCacheClearsStaleLiveStateForRealSessions(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), []byte(`{"id":"real","name":"real chat"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","live":true,"sessions":[{"id":"real","live":true,"status":"running"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != false {
+		t.Fatalf("workspace live = %v, want false", workspaceCache["live"])
+	}
+	if _, ok := session["live"]; ok {
+		t.Fatalf("session = %v, want stale live removed", session)
+	}
+	if _, ok := session["status"]; ok {
+		t.Fatalf("session = %v, want stale status removed", session)
+	}
+}
+
+func TestValidateWorkspacesClearsDirectStaleLiveFromFileIdleState(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	sessionData := []byte(
+		`{"id":"real","name":"real chat"}` + "\n" +
+			`{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"done"}]}` + "\n",
+	)
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := validateWorkspaces(request{
+		"preserveSessionState": true,
+		"workspaces": []any{map[string]any{
+			"id":       "w1",
+			"path":     workspace,
+			"sessions": []any{map[string]any{"id": "real", "live": true, "status": "streaming"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("validateWorkspaces error = %v", err)
+	}
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != false || session["live"] == true || session["status"] != "idle" {
+		t.Fatalf("workspace = %v session = %v, want direct stale live cleared", workspaceCache, session)
+	}
+}
+
+func TestValidateWorkspacesPreservesDirectRuntimeLiveState(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), []byte(`{"id":"real","name":"real chat"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := validateWorkspaces(request{
+		"preserveSessionState": true,
+		"workspaces": []any{map[string]any{
+			"id":       "w1",
+			"path":     workspace,
+			"sessions": []any{map[string]any{"id": "real", "live": true, "status": "running"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("validateWorkspaces error = %v", err)
+	}
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != true || session["live"] != true || session["status"] != "running" {
+		t.Fatalf("workspace = %v session = %v, want runtime live preserved", workspaceCache, session)
+	}
+}
+
 func TestSaveWorkspaceCachePrunesMissingSessionsBeforeWriting(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
