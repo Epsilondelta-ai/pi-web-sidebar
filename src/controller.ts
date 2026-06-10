@@ -385,9 +385,9 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
   function syncChatStreamingIndicator(): void {
     const storedStreamingSessionId: string = storedChatStreamingSessionId();
-    const streaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
-      .some((element: Element): boolean => element.isConnected) || !!storedStreamingSessionId;
-    const nextSessionId: string = streaming ? app.dataset.activeSessionId || storedStreamingSessionId : "";
+    const domStreaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
+      .some((element: Element): boolean => element.isConnected);
+    const nextSessionId: string = domStreaming ? app.dataset.activeSessionId || storedStreamingSessionId : storedStreamingSessionId;
     const previousSessionId: string = chatStreamingSessionId;
 
     if (previousSessionId === nextSessionId) {
@@ -1054,29 +1054,31 @@ function snapshotSession(
 }
 
 function applyStoredChatStreamingIndicator(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
-  const sessionId: string = storedChatStreamingSessionId();
-  return sessionId ? updateWorkspaceSession(workspaces, sessionId, { live: true, status: "streaming" }) : workspaces;
+  return storedChatStreamingSessionIds().reduce((nextWorkspaces: SidebarWorkspace[], sessionId: string): SidebarWorkspace[] => {
+    return updateWorkspaceSession(nextWorkspaces, sessionId, { live: true, status: "streaming" });
+  }, workspaces);
 }
 
 function storedChatStreamingSessionId(): string {
+  return storedChatStreamingSessionIds()[0] || "";
+}
+
+function storedChatStreamingSessionIds(): string[] {
   const storedChatSessions: unknown = readStoredChatSessions();
 
   if (!isRecord(storedChatSessions)) {
-    return "";
+    return [];
   }
 
-  const activeSessionId: string = stringValue(storedChatSessions.activeSessionId);
   const sessions: unknown = storedChatSessions.sessions;
-
-  if (!activeSessionId || !Array.isArray(sessions)) {
-    return "";
+  if (!Array.isArray(sessions)) {
+    return [];
   }
 
-  const activeSession: unknown = sessions.find((session: unknown): boolean => {
-    return isRecord(session) && stringValue(session.id) === activeSessionId;
-  });
-
-  return chatSessionIsStreaming(activeSession) ? activeSessionId : "";
+  return sessions
+    .filter((session: unknown): boolean => chatSessionIsStreaming(session))
+    .map((session: unknown): string => isRecord(session) ? stringValue(session.id) : "")
+    .filter((sessionId: string): boolean => sessionId !== "");
 }
 
 function readStoredChatSessions(): unknown {

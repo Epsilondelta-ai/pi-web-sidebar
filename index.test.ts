@@ -1389,6 +1389,37 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
+  test("stored chat running marks inactive unclicked sessions live after refresh", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s2";
+    app.dataset.activeWorkspaceId = "w2";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "unclicked", status: "idle" }] },
+      { id: "w2", name: "two", sessions: [{ id: "s2", name: "selected", status: "idle" }] },
+    ];
+    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
+      activeSessionId: "s2",
+      sessions: [
+        {
+          id: "s1",
+          messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
+        },
+        {
+          id: "s2",
+          messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "ok" }] }],
+        },
+      ],
+    }));
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await controller.refresh();
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-session='s2'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
+  });
+
   test("stored chat running keeps collapsed workspace green and clickable", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s2";
