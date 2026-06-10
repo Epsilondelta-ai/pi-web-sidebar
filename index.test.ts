@@ -614,6 +614,7 @@ describe("pi-web-sidebar plugin", () => {
     app.workspaceList = app.testWorkspaces;
     const context = testContext(app, { backend: async (method: string, options: BackendCallLog["options"]): Promise<unknown> => {
       if (method === "validate-workspaces") {
+        expect(options.data?.preserveSessionState).toBe(true);
         expect(options.data?.workspaces).toEqual(app.testWorkspaces);
         return { workspaces: validatedWorkspaces };
       }

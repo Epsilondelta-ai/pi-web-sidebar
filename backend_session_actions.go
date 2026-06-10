@@ -11,7 +11,10 @@ import (
 )
 
 func validateWorkspaces(data request) (request, error) {
-	return validateWorkspaceCache(request{"workspaces": data["workspaces"]}), nil
+	return validateWorkspaceCache(request{
+		"preserveSessionState": data["preserveSessionState"],
+		"workspaces":           data["workspaces"],
+	}), nil
 }
 
 func saveWorkspaceCache(data request) (request, error) {

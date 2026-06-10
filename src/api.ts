@@ -31,7 +31,7 @@ export async function loadWorkspaces(
   }
 
   if (workspaceSource.length > 0) {
-    return validateAndStoreWorkspaces(context, workspaceSource);
+    return validateAndStoreWorkspaces(context, workspaceSource, latestDirectWorkspaces.length > 0);
   }
 
   return workspaceSource;
@@ -202,13 +202,21 @@ export async function saveWorkspaceCache(context: PluginContext, workspaces: Sid
   await context.backend?.("save-workspace-cache", { data: { workspaces } });
 }
 
-async function validateAndStoreWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
-  return normalizeSidebarWorkspaces(await validateWorkspaces(context, workspaces));
+async function validateAndStoreWorkspaces(
+  context: PluginContext,
+  workspaces: SidebarWorkspace[],
+  preserveSessionState: boolean,
+): Promise<SidebarWorkspace[]> {
+  return normalizeSidebarWorkspaces(await validateWorkspaces(context, workspaces, preserveSessionState));
 }
 
-async function validateWorkspaces(context: PluginContext, workspaces: SidebarWorkspace[]): Promise<SidebarWorkspace[]> {
+async function validateWorkspaces(
+  context: PluginContext,
+  workspaces: SidebarWorkspace[],
+  preserveSessionState: boolean,
+): Promise<SidebarWorkspace[]> {
   try {
-    const result: unknown = await context.backend?.("validate-workspaces", { data: { workspaces } });
+    const result: unknown = await context.backend?.("validate-workspaces", { data: { preserveSessionState, workspaces } });
 
     if (isRecord(result) && Array.isArray(result.workspaces)) {
       return result.workspaces.filter(isSidebarWorkspace);

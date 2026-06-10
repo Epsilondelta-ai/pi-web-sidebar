@@ -120,7 +120,7 @@ func sessionRecordFromFile(path string) map[string]any {
 	return header
 }
 
-func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[string]any {
+func mergeCachedSessionRecord(cached map[string]any, valid map[string]any, preserveSessionState bool) map[string]any {
 	if strings.TrimSpace(stringFromAny(cached["name"])) == "" {
 		cached["name"] = sessionName(valid)
 	}
@@ -135,8 +135,10 @@ func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[s
 		delete(cached, "parentId")
 	}
 	delete(cached, "__sessionInfoName")
-	delete(cached, "live")
-	delete(cached, "status")
+	if !preserveSessionState {
+		delete(cached, "live")
+		delete(cached, "status")
+	}
 	normalizeSessionRecord(cached)
 	return cached
 }

@@ -659,6 +659,45 @@ func TestLoadWorkspaceCacheClearsStaleLiveStateForRealSessions(t *testing.T) {
 	}
 }
 
+func TestValidateWorkspacesPreservesDirectRuntimeLiveState(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), []byte(`{"id":"real","name":"real chat"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result, err := validateWorkspaces(request{
+		"preserveSessionState": true,
+		"workspaces": []any{map[string]any{
+			"id":       "w1",
+			"path":     workspace,
+			"sessions": []any{map[string]any{"id": "real", "live": true, "status": "running"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("validateWorkspaces error = %v", err)
+	}
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != true || session["live"] != true || session["status"] != "running" {
+		t.Fatalf("workspace = %v session = %v, want runtime live preserved", workspaceCache, session)
+	}
+}
+
 func TestSaveWorkspaceCachePrunesMissingSessionsBeforeWriting(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")

@@ -35,6 +35,7 @@ func validateWorkspaceCache(cache request) request {
 		return cache
 	}
 
+	preserveSessionState := cache["preserveSessionState"] == true
 	validated := make([]any, 0, len(workspaces))
 	for _, item := range workspaces {
 		workspace, ok := item.(map[string]any)
@@ -70,7 +71,7 @@ func validateWorkspaceCache(cache request) request {
 				continue
 			}
 
-			filteredSessions = append(filteredSessions, mergeCachedSessionRecord(session, validSession))
+			filteredSessions = append(filteredSessions, mergeCachedSessionRecord(session, validSession, preserveSessionState))
 			seenIDs[sessionID] = true
 		}
 
