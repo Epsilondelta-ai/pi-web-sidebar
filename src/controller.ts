@@ -484,16 +484,33 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
+    const previousSessionId: string = app.dataset.activeSessionId || "";
     app.dataset.activeSessionId = sessionId || "";
     reconcileActiveWorkspace();
     storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
     recheckStoredSessionLiveState(app.dataset.activeSessionId || "");
     renderCurrentWorkspaces();
+    emitExternalActiveSessionSelected(previousSessionId);
     syncChatStreamingIndicator();
     scheduleChatStreamingSync();
     if (sessionId) {
       void refreshCurrentWorkspaces();
     }
+  }
+
+  function emitExternalActiveSessionSelected(previousSessionId: string): void {
+    const sessionId: string = app.dataset.activeSessionId || "";
+    const workspaceId: string = app.dataset.activeWorkspaceId || "";
+
+    if (!sessionId || sessionId === previousSessionId || !workspaceId) {
+      return;
+    }
+
+    sidebarBridge.emitEvent("session.selected", {
+      sessionId,
+      source: "session.activeId",
+      workspaceId,
+    });
   }
 
   function setActiveSidebarSession(workspaceId: string, sessionId: string): void {
