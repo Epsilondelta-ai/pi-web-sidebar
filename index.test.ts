@@ -1212,6 +1212,48 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
+  test("chat streaming DOM mutations do not re-emit unchanged selected session", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "idle", status: "idle" }] }];
+    const chatRoot: HTMLElement = document.createElement("section");
+    const termInner: HTMLElement = document.createElement("div");
+    const controller = createSidebarController(app, testContext(app));
+    let selectedSessionEmits = 0;
+    let echoSelectedSession = false;
+    chatRoot.dataset.pluginChatRoot = "";
+    termInner.className = "term-inner";
+    requireElement(app, ".app-body").append(chatRoot);
+    chatRoot.append(termInner);
+    controller.mount();
+
+    const subscription: SubscriptionLike = globalThis.piWebSidebar!.channels.selectedSession$.subscribe(
+      (selected: import("./src/types").SelectedSession | null): void => {
+        if (!echoSelectedSession || !selected?.sessionId) {
+          return;
+        }
+
+        selectedSessionEmits += 1;
+        const streamingMessage: HTMLElement = document.createElement("article");
+        streamingMessage.dataset.streaming = "true";
+        termInner.replaceChildren(streamingMessage);
+      },
+    );
+
+    echoSelectedSession = true;
+    const streamingMessage: HTMLElement = document.createElement("article");
+    streamingMessage.dataset.streaming = "true";
+    termInner.replaceChildren(streamingMessage);
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 80); });
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(selectedSessionEmits).toBe(0);
+
+    subscription.unsubscribe();
+    controller.dispose();
+  });
+
   test("chat streaming DOM follows active session changes without stale indicators", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";

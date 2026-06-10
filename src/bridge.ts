@@ -24,6 +24,7 @@ export function createSidebarBridge(
 ): SidebarBridge {
   let latestPiStatus: PiStatus = createUnknownPiStatus();
   let latestSnapshot: SidebarSnapshot = createSidebarSnapshot(app, getWorkspaces(), getElement(), latestPiStatus);
+  let latestSelectedSession: SelectedSession | null = resolveSelectedSession(latestSnapshot);
   const channels: SidebarRxChannels = createRxChannels(latestSnapshot, latestPiStatus);
   const state$: SubjectLike<SidebarSnapshot> | undefined = globalThis.piWeb?.behaviorSubject(
     "plugin.pi-web-sidebar.state",
@@ -52,9 +53,14 @@ export function createSidebarBridge(
     const selected: SelectedSession | null = resolveSelectedSession(latestSnapshot);
     persistSelectedSession(selected);
     channels.state$.next(latestSnapshot);
-    channels.selectedSession$.next(selected);
     state$?.next(latestSnapshot);
-    selectedSession$?.next(selected);
+
+    if (!selectedSessionEqual(latestSelectedSession, selected)) {
+      latestSelectedSession = selected;
+      channels.selectedSession$.next(selected);
+      selectedSession$?.next(selected);
+    }
+
     publishEvent(channels, events$, { type: "state", reason, snapshot: latestSnapshot, detail: selected || {} });
   }
 
@@ -125,6 +131,10 @@ function resolveSelectedSession(snapshot: SidebarSnapshot): SelectedSession | nu
   });
 
   return workspace ? { sessionId: snapshot.activeSessionId, workspaceId: workspace.id } : null;
+}
+
+function selectedSessionEqual(previous: SelectedSession | null, next: SelectedSession | null): boolean {
+  return previous?.sessionId === next?.sessionId && previous?.workspaceId === next?.workspaceId;
 }
 
 function readStoredString(key: string): string {
