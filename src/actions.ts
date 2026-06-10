@@ -482,8 +482,8 @@ function toggleWorkspaceGroup(app: AppElement, workspaceId?: string): void {
 
   const groups: HTMLElement[] = [...app.querySelectorAll<HTMLElement>(`[${PLUGIN_PANEL_ATTR}] [data-workspace-group]`)];
   const selected: HTMLElement | undefined = groups.find((group: HTMLElement): boolean => group.dataset.workspaceGroup === workspaceId);
-  const sessionsHidden: boolean = !!selected?.querySelector<HTMLElement>(".sessions")?.hidden;
-  const shouldOpen: boolean = app.sidebarOpenWorkspaceId !== workspaceId || sessionsHidden;
+  const sessionsHidden: boolean = selected?.querySelector<HTMLElement>(".sessions")?.hidden !== false;
+  const shouldOpen: boolean = sessionsHidden;
   app.sidebarOpenWorkspaceId = shouldOpen ? workspaceId : "";
 
   for (const group of groups) {

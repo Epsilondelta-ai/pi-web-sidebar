@@ -277,6 +277,63 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.sidebarSortableRenderToken).toBeTruthy();
   });
 
+  test("active workspace row toggles open closed and open again", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "one", status: "streaming" }] },
+      { id: "w2", name: "two", sessions: [{ id: "s2", name: "two" }] },
+    ];
+    app.sidebarOpenWorkspaceId = "w1";
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    const row = (): HTMLElement => requireElement(app, "[data-workspace='w1'].ws-row");
+    const sessions = (): HTMLElement => requireElement(app, "[data-workspace-group='w1'] > .sessions");
+    expect(sessions().hidden).toBe(false);
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+
+    row().dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(sessions().hidden).toBe(true);
+    expect(row().getAttribute("aria-expanded")).toBe("false");
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+
+    row().dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(sessions().hidden).toBe(false);
+    expect(row().getAttribute("aria-expanded")).toBe("true");
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+  });
+
+  test("workspace row toggles open closed and open again", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [
+      { id: "w1", name: "one", sessions: [{ id: "s1", name: "one" }] },
+      { id: "w2", name: "two", sessions: [{ id: "s2", name: "two" }] },
+    ];
+    app.sidebarOpenWorkspaceId = "w2";
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    const row: HTMLElement = requireElement(app, "[data-workspace='w1'].ws-row");
+    const sessions: HTMLElement = requireElement(app, "[data-workspace-group='w1'] > .sessions");
+    expect(sessions.hidden).toBe(true);
+
+    row.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(sessions.hidden).toBe(false);
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+
+    row.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(sessions.hidden).toBe(true);
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+
+    row.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(sessions.hidden).toBe(false);
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+  });
+
   test("dispose removes plugin sidebar and leaves app body empty", () => {
     const app = setupApp();
     const controller = createSidebarController(app, testContext(app));
