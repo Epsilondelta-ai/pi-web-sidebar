@@ -27,6 +27,10 @@ export function sessionIsLive(session: SidebarSession): boolean {
   }
 
   const status: string = (session.status || "").toLowerCase();
+  if (["idle", "waiting", "inactive"].includes(status)) {
+    return false;
+  }
+
   return !!(session.live || ["running", "thinking", "active", "live", "streaming"].includes(status));
 }
 

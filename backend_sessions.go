@@ -135,6 +135,8 @@ func mergeCachedSessionRecord(cached map[string]any, valid map[string]any) map[s
 		delete(cached, "parentId")
 	}
 	delete(cached, "__sessionInfoName")
+	delete(cached, "live")
+	delete(cached, "status")
 	normalizeSessionRecord(cached)
 	return cached
 }
@@ -251,7 +253,7 @@ func workspaceHasLiveSession(sessions []any) bool {
 		}
 
 		status := strings.ToLower(strings.TrimSpace(stringFromAny(session["status"])))
-		if session["unreadCompleted"] == true || completedStatus(status) {
+		if session["unreadCompleted"] == true || completedStatus(status) || inactiveStatus(status) {
 			continue
 		}
 		if session["live"] == true || activeStatus(status) {

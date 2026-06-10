@@ -615,6 +615,50 @@ func TestLoadWorkspaceCacheUpdatesCachedSessionMissingName(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceCacheClearsStaleLiveStateForRealSessions(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "real.jsonl"), []byte(`{"id":"real","name":"real chat"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","live":true,"sessions":[{"id":"real","live":true,"status":"running"}]}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	result := loadValidatedWorkspaceCacheForTest(t)
+	workspaceCache := result["workspaces"].([]any)[0].(map[string]any)
+	session := workspaceCache["sessions"].([]any)[0].(map[string]any)
+	if workspaceCache["live"] != false {
+		t.Fatalf("workspace live = %v, want false", workspaceCache["live"])
+	}
+	if _, ok := session["live"]; ok {
+		t.Fatalf("session = %v, want stale live removed", session)
+	}
+	if _, ok := session["status"]; ok {
+		t.Fatalf("session = %v, want stale status removed", session)
+	}
+}
+
 func TestSaveWorkspaceCachePrunesMissingSessionsBeforeWriting(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")

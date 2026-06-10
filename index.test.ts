@@ -1660,6 +1660,7 @@ describe("pi-web-sidebar plugin", () => {
       name: "one",
       sessions: [
         { id: "live", name: "live", status: "running" },
+        { id: "stale-live", name: "idle", live: true, status: "idle" },
         { id: "active-waiting", name: "real chat", active: true, kind: " waiting " },
         { id: "completed", name: "completed", active: true, unreadCompleted: true },
         { id: "waiting", name: "waiting", kind: " waiting ", status: "waiting", unread: true },
@@ -1672,6 +1673,9 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-session='live'] .session-indicator.live")).toBeTruthy();
     expect(app.querySelector("[data-session='live'] .session-indicator.idle")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='live'] .session-indicator").title).toBe("session active");
+    expect(app.querySelector("[data-session='stale-live'] .session-indicator.idle")).toBeTruthy();
+    expect(app.querySelector("[data-session='stale-live'] .session-indicator.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='stale-live'] .session-indicator").title).toBe("session inactive");
     expect(app.querySelector("[data-session='active-waiting'] .session-indicator.idle")).toBeTruthy();
     expect(app.querySelector("[data-session='active-waiting'] .session-indicator.live")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='active-waiting'] .session-indicator").title).toBe("session inactive");
