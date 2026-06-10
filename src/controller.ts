@@ -40,6 +40,7 @@ type ChatStreamingSessionSnapshot = {
 
 const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
 const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
+const CHAT_SESSION_STORAGE_KEY = "pi-web-chat.sessions.v1";
 const CHAT_STREAMING_FAST_WATCH_LIMIT = 20;
 const CHAT_STREAMING_WATCH_INTERVAL_MS = 250;
 
@@ -373,9 +374,10 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function syncChatStreamingIndicator(): void {
+    const storedStreamingSessionId: string = storedChatStreamingSessionId();
     const streaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
-      .some((element: Element): boolean => element.isConnected);
-    const nextSessionId: string = streaming ? app.dataset.activeSessionId || "" : "";
+      .some((element: Element): boolean => element.isConnected) || !!storedStreamingSessionId;
+    const nextSessionId: string = streaming ? app.dataset.activeSessionId || storedStreamingSessionId : "";
     const previousSessionId: string = chatStreamingSessionId;
 
     if (previousSessionId === nextSessionId) {
@@ -693,11 +695,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       optimisticSessionsByWorkspace,
       refreshedWorkspaces,
     );
-    workspaces = clearWorkspaceSessionsById(
+    workspaces = applyStoredChatStreamingIndicator(clearWorkspaceSessionsById(
       mergeOptimisticSessions(refreshedWorkspaces, optimisticSessionsByWorkspace),
       clearedSessionWorkspaceIds,
       app,
-    );
+    ));
     if (chatStreamingSessionId) {
       chatStreamingSnapshots = {
         ...chatStreamingSnapshots,
@@ -1035,6 +1037,72 @@ function snapshotSession(
 ): ChatStreamingSessionSnapshot {
   const session: SidebarSession | undefined = findSessionById(workspaces, sessionId) || findSessionById(appWorkspaces, sessionId);
   return { live: session?.live, status: session?.status };
+}
+
+function applyStoredChatStreamingIndicator(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
+  const sessionId: string = storedChatStreamingSessionId();
+  return sessionId ? updateWorkspaceSession(workspaces, sessionId, { live: true, status: "streaming" }) : workspaces;
+}
+
+function storedChatStreamingSessionId(): string {
+  const storedChatSessions: unknown = readStoredChatSessions();
+
+  if (!isRecord(storedChatSessions)) {
+    return "";
+  }
+
+  const activeSessionId: string = stringValue(storedChatSessions.activeSessionId);
+  const sessions: unknown = storedChatSessions.sessions;
+
+  if (!activeSessionId || !Array.isArray(sessions)) {
+    return "";
+  }
+
+  const activeSession: unknown = sessions.find((session: unknown): boolean => {
+    return isRecord(session) && stringValue(session.id) === activeSessionId;
+  });
+
+  return chatSessionIsStreaming(activeSession) ? activeSessionId : "";
+}
+
+function readStoredChatSessions(): unknown {
+  try {
+    return JSON.parse(globalThis.localStorage?.getItem(CHAT_SESSION_STORAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function chatSessionIsStreaming(session: unknown): boolean {
+  if (!isRecord(session)) {
+    return false;
+  }
+
+  if (session.streaming === true || stringValue(session.status).toLowerCase() === "streaming") {
+    return true;
+  }
+
+  const messages: unknown = session.messages;
+  if (!Array.isArray(messages)) {
+    return false;
+  }
+
+  return messages.some(chatMessageIsStreaming);
+}
+
+function chatMessageIsStreaming(message: unknown): boolean {
+  if (!isRecord(message)) {
+    return false;
+  }
+
+  if (message.streaming === true || stringValue(message.status).toLowerCase() === "streaming") {
+    return true;
+  }
+
+  const toolCalls: unknown = message.toolCalls;
+  return Array.isArray(toolCalls) && toolCalls.some((toolCall: unknown): boolean => {
+    return isRecord(toolCall) && ["pending", "running", "streaming"].includes(stringValue(toolCall.status).toLowerCase());
+  });
 }
 
 function findSessionById(workspaces: SidebarWorkspace[], sessionId: string): SidebarSession | undefined {

@@ -1190,6 +1190,39 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
   });
 
+  test("stored chat running tool call marks active session and workspace live after refresh", async () => {
+    const app = setupApp();
+    app.dataset.activeSessionId = "s1";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "idle", status: "idle" }] }];
+    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
+      activeSessionId: "s1",
+      sessions: [{
+        id: "s1",
+        messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
+      }],
+    }));
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await controller.refresh();
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session streaming");
+
+    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
+      activeSessionId: "s1",
+      sessions: [{
+        id: "s1",
+        messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "ok" }] }],
+      }],
+    }));
+    await controller.refresh();
+
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
+  });
+
   test("chat streaming DOM restores latest workspace refresh state", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
@@ -1215,7 +1248,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session streaming");
 
     streamingMessage.remove();
-    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 1000); });
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 300); });
 
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session inactive");
@@ -1240,7 +1273,7 @@ describe("pi-web-sidebar plugin", () => {
     await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 0); });
 
     streamingMessage.remove();
-    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 1000); });
+    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 300); });
 
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session active");
