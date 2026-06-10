@@ -395,6 +395,87 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement(app, "[data-workspace-group='w2'] .label").textContent).toBe("two");
   });
 
+  test("renders the active workspace and session in the topbar crumb", () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "chat one" }] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const crumb = requireElement<HTMLElement>(app, ".topbar > .crumb");
+    expect(crumb.textContent).toBe("one / chat one");
+    expect(crumb.getAttribute("aria-label")).toBe("Current workspace one, current session chat one");
+  });
+
+  test("updates the topbar crumb when selecting another session", () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [
+      { id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "chat one" }] },
+      { id: "w2", name: "two", path: "/two", sessions: [{ id: "s2", name: "chat two" }] },
+    ];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    requireElement<HTMLButtonElement>(app, "[data-session='s2'].session-main").click();
+
+    expect(requireElement<HTMLElement>(app, ".topbar > .crumb").textContent).toBe("two / chat two");
+  });
+
+  test("truncates long session names in the topbar crumb", () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "very long session name" }] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const crumb = requireElement<HTMLElement>(app, ".topbar > .crumb");
+    expect(crumb.textContent).toBe("one / very long se...");
+    expect(crumb.title).toBe("one / very long session name");
+    expect(crumb.getAttribute("aria-label")).toBe(
+      "Current workspace one, current session very long session name",
+    );
+  });
+
+  test("removes plugin-created topbar crumb on dispose", () => {
+    const app = setupApp();
+    app.dataset.activeWorkspaceId = "w1";
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "chat one" }] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    expect(requireElement<HTMLElement>(app, ".topbar > .crumb").textContent).toBe("one / chat one");
+    controller.dispose();
+
+    expect(app.querySelector(".topbar > .crumb")).toBeFalsy();
+  });
+
+  test("restores host-owned topbar crumb on dispose", () => {
+    const app = setupApp();
+    const topbar = requireElement<HTMLElement>(app, ".topbar");
+    topbar.insertAdjacentHTML("beforeend", '<span class="crumb" title="host title" aria-label="host crumb">host</span>');
+    app.dataset.activeWorkspaceId = "w1";
+    app.dataset.activeSessionId = "s1";
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "chat one" }] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    const crumb = requireElement<HTMLElement>(app, ".topbar > .crumb");
+    expect(crumb.textContent).toBe("one / chat one");
+    controller.dispose();
+
+    expect(crumb.isConnected).toBe(true);
+    expect(crumb.textContent).toBe("host");
+    expect(crumb.title).toBe("host title");
+    expect(crumb.getAttribute("aria-label")).toBe("host crumb");
+  });
+
   test("mounts the sidebar toggle into the document topbar when app does not contain the header", () => {
     const app = setupApp();
     const internalTopbar = requireElement<HTMLElement>(app, ".topbar");

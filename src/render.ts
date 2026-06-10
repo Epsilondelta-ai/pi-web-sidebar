@@ -1,5 +1,6 @@
 import { ICONS, PLUGIN_PANEL_ATTR } from "./constants";
 import { orderedSessionTree, orderedWorkspaces } from "./render-order";
+import { syncTopbarCrumb } from "./topbar-crumb";
 import {
   sessionBadges,
   sessionDisplayName,
@@ -20,6 +21,8 @@ export function renderPluginWorkspaceList(
   if (!section || !head || !Array.isArray(workspaces)) {
     return;
   }
+
+  syncTopbarCrumb(app, workspaces);
 
   section
     .querySelectorAll(":scope > .workspace-group, :scope > .workspace-empty, :scope > [data-sortable-workspaces]")
