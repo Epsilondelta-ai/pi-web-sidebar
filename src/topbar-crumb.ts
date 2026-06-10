@@ -1,4 +1,5 @@
 import { findTopbar } from "./layout";
+import { sessionDisplayName } from "./render-session-utils";
 import type { AppElement, SidebarSession, SidebarWorkspace } from "./types";
 
 export function syncTopbarCrumb(app: AppElement, workspaces: SidebarWorkspace[]): void {
@@ -14,10 +15,12 @@ export function syncTopbarCrumb(app: AppElement, workspaces: SidebarWorkspace[])
   const activeSession: SidebarSession | undefined = findActiveSession(app, activeWorkspace, workspaces);
   const workspaceLabel: string = workspaceDisplayName(activeWorkspace);
   const sessionLabel: string = sessionCrumbLabel(activeSession);
+  const fullSessionLabel: string = fullSessionCrumbLabel(activeSession);
   const label: string = `${workspaceLabel} / ${sessionLabel}`;
+  const fullLabel: string = `${workspaceLabel} / ${fullSessionLabel}`;
   crumb.textContent = label;
-  crumb.title = label;
-  crumb.setAttribute("aria-label", `Current workspace ${workspaceLabel}, current session ${sessionLabel}`);
+  crumb.title = fullLabel;
+  crumb.setAttribute("aria-label", `Current workspace ${workspaceLabel}, current session ${fullSessionLabel}`);
 }
 
 export function cleanupTopbarCrumb(app: AppElement): void {
@@ -119,6 +122,10 @@ function workspaceDisplayName(workspace: SidebarWorkspace | undefined): string {
 }
 
 function sessionCrumbLabel(session: SidebarSession | undefined): string {
+  return session ? sessionDisplayName(session) : "No session";
+}
+
+function fullSessionCrumbLabel(session: SidebarSession | undefined): string {
   return session?.name || session?.id || "No session";
 }
 

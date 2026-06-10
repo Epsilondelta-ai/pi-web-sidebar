@@ -425,7 +425,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, ".topbar > .crumb").textContent).toBe("two / chat two");
   });
 
-  test("keeps full session names in the topbar crumb", () => {
+  test("truncates long session names in the topbar crumb", () => {
     const app = setupApp();
     app.dataset.activeWorkspaceId = "w1";
     app.dataset.activeSessionId = "s1";
@@ -434,7 +434,12 @@ describe("pi-web-sidebar plugin", () => {
 
     controller.mount();
 
-    expect(requireElement<HTMLElement>(app, ".topbar > .crumb").textContent).toBe("one / very long session name");
+    const crumb = requireElement<HTMLElement>(app, ".topbar > .crumb");
+    expect(crumb.textContent).toBe("one / very long se...");
+    expect(crumb.title).toBe("one / very long session name");
+    expect(crumb.getAttribute("aria-label")).toBe(
+      "Current workspace one, current session very long session name",
+    );
   });
 
   test("removes plugin-created topbar crumb on dispose", () => {
