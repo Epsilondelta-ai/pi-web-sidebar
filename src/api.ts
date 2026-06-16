@@ -318,7 +318,13 @@ function mergeCachedEmptyWorkspaces(
     directWorkspaces.map((workspace: SidebarWorkspace): [string, SidebarWorkspace] => [workspace.id, workspace]),
   );
   const mergedWorkspaces: SidebarWorkspace[] = cachedWorkspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
-    return directWorkspacesById.get(workspace.id) || workspace;
+    const directWorkspace: SidebarWorkspace | undefined = directWorkspacesById.get(workspace.id);
+
+    if (!directWorkspace) {
+      return workspace;
+    }
+
+    return mergeDirectWorkspaceWithCachedSessions(directWorkspace, workspace);
   });
   const cachedWorkspaceIds: Set<string> = new Set(cachedWorkspaces.map((workspace: SidebarWorkspace): string => workspace.id));
 
@@ -331,12 +337,30 @@ function mergeCachedEmptyWorkspaces(
   return mergedWorkspaces;
 }
 
+function mergeDirectWorkspaceWithCachedSessions(
+  directWorkspace: SidebarWorkspace,
+  cachedWorkspace: SidebarWorkspace,
+): SidebarWorkspace {
+  if (!hasNoSessions(directWorkspace) || hasNoSessions(cachedWorkspace)) {
+    return directWorkspace;
+  }
+
+  const sessions: SidebarSession[] = cachedWorkspace.sessions || [];
+  return {
+    ...cachedWorkspace,
+    ...directWorkspace,
+    live: cachedWorkspace.live,
+    sessionCount: cachedWorkspace.sessionCount ?? sessions.length,
+    sessions,
+  };
+}
+
 function canMergeCachedEmptyWorkspaces(directWorkspaces: SidebarWorkspace[], cachedWorkspaces: SidebarWorkspace[]): boolean {
   if (cachedWorkspaces.length === 0) {
     return false;
   }
 
-  return directWorkspaces.every(hasNoSessions) && cachedWorkspaces.every(hasNoSessions);
+  return directWorkspaces.every(hasNoSessions);
 }
 
 function hasNoSessions(workspace: SidebarWorkspace): boolean {
