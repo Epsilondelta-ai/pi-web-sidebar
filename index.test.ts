@@ -1366,6 +1366,27 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .ws-name .dot").title).toBe("workspace live");
   });
 
+  test("session changed title overlays placeholder refresh until backend name arrives", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", title: "draft" });
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("draft");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    await controller.refresh();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("draft");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "backend name" }] }];
+    await controller.refresh();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("backend name");
+
+    controller.dispose();
+  });
+
   test("chat streaming DOM marks active session and workspace indicators green", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
@@ -1997,6 +2018,41 @@ describe("pi-web-sidebar plugin", () => {
     await new Promise((resolve) => setTimeout(resolve, 80));
 
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("new title");
+  });
+
+  test("session changed name overlay survives placeholder refresh until backend rename appears", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({
+      sessionId: "s1",
+      name: "renamed chat",
+    });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("renamed chat");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("renamed chat");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("renamed chat");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "backend renamed" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("backend rena...");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("New chat");
   });
 
   test("session menu rename prompts and persists through backend", async () => {
