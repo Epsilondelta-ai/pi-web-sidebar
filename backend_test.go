@@ -269,12 +269,28 @@ func TestCreateSessionWritesPrivatePiSessionFile(t *testing.T) {
 }
 
 func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
+	childSession := decoratedSubagentChildSessionForParent(t, "2026-06-08T00-00-00Z_019-parent.jsonl")
+	if childSession["parentId"] != "019-parent" || childSession["kind"] != "subagent" || childSession["name"] != "subagent-reviewer-abcd1234-1" {
+		t.Fatalf("childSession = %v, want decorated subagent child", childSession)
+	}
+	if _, ok := childSession["title"]; ok {
+		t.Fatalf("childSession = %v, want no legacy title", childSession)
+	}
+}
+
+func TestLoadWorkspaceCacheDecoratesSidebarSubagentChildSessions(t *testing.T) {
+	parentID := "sidebar-1781591089765935000"
+	childSession := decoratedSubagentChildSessionForParent(t, parentID)
+	if childSession["parentId"] != parentID || childSession["kind"] != "subagent" || childSession["name"] != "subagent-reviewer-abcd1234-1" {
+		t.Fatalf("childSession = %v, want sidebar parent subagent child", childSession)
+	}
+}
+
+func decoratedSubagentChildSessionForParent(t *testing.T, parentName string) map[string]any {
+	t.Helper()
 	home := t.TempDir()
 	workspace := filepath.Join(home, "workspace")
-	sessionDir := filepath.Join(workspace, ".pi", "sessions")
-	parentID := "019-parent"
-	parentName := "2026-06-08T00-00-00Z_" + parentID + ".jsonl"
-	childDir := filepath.Join(sessionDir, parentName, "abcd1234", "run-0")
+	childDir := filepath.Join(workspace, ".pi", "sessions", parentName, "abcd1234", "run-0")
 	if err := os.MkdirAll(childDir, 0o755); err != nil {
 		t.Fatalf("create child dir: %v", err)
 	}
@@ -297,22 +313,14 @@ func TestLoadWorkspaceCacheDecoratesSubagentChildSessions(t *testing.T) {
 
 	result := loadValidatedWorkspaceCacheForTest(t)
 	sessions := result["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)
-	var childSession map[string]any
 	for _, item := range sessions {
 		session := item.(map[string]any)
 		if session["id"] == "child" {
-			childSession = session
+			return session
 		}
 	}
-	if childSession == nil {
-		t.Fatalf("sessions = %v, want child", sessions)
-	}
-	if childSession["parentId"] != parentID || childSession["kind"] != "subagent" || childSession["name"] != "subagent-reviewer-abcd1234-1" {
-		t.Fatalf("childSession = %v, want decorated subagent child", childSession)
-	}
-	if _, ok := childSession["title"]; ok {
-		t.Fatalf("childSession = %v, want no legacy title", childSession)
-	}
+	t.Fatalf("sessions = %v, want child", sessions)
+	return nil
 }
 
 func TestLoadWorkspaceCacheDecoratesTeamAgentSessions(t *testing.T) {
