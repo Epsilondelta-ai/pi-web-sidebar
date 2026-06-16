@@ -277,7 +277,7 @@ async function loadWorkspaceCache(context: PluginContext): Promise<SidebarWorksp
     const result: unknown = await context.backend?.("load-workspace-cache", { data: {} });
 
     if (isRecord(result) && Array.isArray(result.workspaces)) {
-      return normalizeSidebarWorkspaces(result.workspaces.filter(isSidebarWorkspace));
+      return normalizeCachedSidebarWorkspaces(result.workspaces.filter(isSidebarWorkspace));
     }
   } catch (error) {
     console.warn("pi-web-sidebar failed to load workspace cache", error);
@@ -293,7 +293,21 @@ function readWorkspaceCache(): SidebarWorkspace[] {
     return [];
   }
 
-  return normalizeSidebarWorkspaces(value.workspaces.filter(isSidebarWorkspace));
+  return normalizeCachedSidebarWorkspaces(value.workspaces.filter(isSidebarWorkspace));
+}
+
+function normalizeCachedSidebarWorkspaces(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
+  return normalizeSidebarWorkspaces(workspaces).map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    const { live: _live, ...workspaceRest } = workspace;
+    const sessions: SidebarSession[] | undefined = workspace.sessions?.map(clearCachedSessionRuntimeState);
+
+    return sessions ? { ...workspaceRest, sessions } : workspaceRest;
+  });
+}
+
+function clearCachedSessionRuntimeState(session: SidebarSession): SidebarSession {
+  const { active: _active, live: _live, status: _status, unread: _unread, unreadCompleted: _unreadCompleted, ...rest } = session;
+  return rest;
 }
 
 function normalizeSidebarWorkspaces(workspaces: SidebarWorkspace[]): SidebarWorkspace[] {
@@ -349,7 +363,6 @@ function mergeDirectWorkspaceWithCachedSessions(
   return {
     ...cachedWorkspace,
     ...directWorkspace,
-    live: cachedWorkspace.live,
     sessionCount: cachedWorkspace.sessionCount ?? sessions.length,
     sessions,
   };

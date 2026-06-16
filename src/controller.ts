@@ -46,7 +46,6 @@ type SessionNameOverlayResult = {
 
 const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
 const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
-const CHAT_SESSION_STORAGE_KEY = "pi-web-chat.sessions.v1";
 const CHAT_STREAMING_FAST_WATCH_LIMIT = 20;
 const CHAT_STREAMING_WATCH_INTERVAL_MS = 250;
 const SESSION_LIVE_RECHECK_INTERVAL_MS = 60_000;
@@ -66,7 +65,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let sessionLiveRecheckTimer: ReturnType<typeof setTimeout> | undefined;
   let chatStreamingWatchAttempts: number = 0;
   let chatStreamingSnapshots: Record<string, ChatStreamingSessionSnapshot> = {};
-  let storedStreamingSnapshots: Record<string, ChatStreamingSessionSnapshot> = {};
   let refreshSequence: number = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let hostWorkspaceRecheckTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,7 +113,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     bindPluginEventChannels();
     bindPiWebChannels();
     bindChatStreamingObserver();
-    recheckStoredSessionLiveState();
     renderCurrentWorkspaces();
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = bindHeaderSidebarToggle(app);
@@ -155,7 +152,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
     chatStreamingWatchAttempts = 0;
     chatStreamingSnapshots = {};
-    storedStreamingSnapshots = {};
     channelSubscriptions.forEach((subscription: SubscriptionLike): void => subscription.unsubscribe());
     channelSubscriptions = [];
     if (refreshTimer) {
@@ -419,42 +415,10 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }, delayMs);
   }
 
-  function recheckStoredSessionLiveState(sessionId?: string): boolean {
-    const liveSessionIds: Set<string> = new Set(storedChatStreamingSessionIds());
-    const targetIds: Set<string> = sessionId
-      ? new Set([sessionId])
-      : new Set([...liveSessionIds, ...Object.keys(storedStreamingSnapshots)]);
-    let changed: boolean = false;
-
-    for (const targetId of targetIds) {
-      if (liveSessionIds.has(targetId)) {
-        if (!storedStreamingSnapshots[targetId]) {
-          storedStreamingSnapshots = {
-            ...storedStreamingSnapshots,
-            [targetId]: snapshotSession(workspaces, app.workspaceList || [], targetId),
-          };
-        }
-
-        if (!chatStreamingSessionIsMarked(targetId)) {
-          workspaces = updateWorkspaceSession(workspaces, targetId, { live: true, status: "streaming" });
-          changed = true;
-        }
-      } else if (storedStreamingSnapshots[targetId]) {
-        const snapshot: ChatStreamingSessionSnapshot = storedStreamingSnapshots[targetId] || { live: false, status: "idle" };
-        workspaces = updateWorkspaceSession(workspaces, targetId, snapshot);
-        delete storedStreamingSnapshots[targetId];
-        changed = true;
-      }
-    }
-
-    return changed;
-  }
-
   function syncChatStreamingIndicator(): void {
-    const storedStreamingSessionId: string = storedChatStreamingSessionId();
     const domStreaming: boolean = Array.from(app.querySelectorAll("[data-plugin-chat-root] [data-streaming='true']"))
       .some((element: Element): boolean => element.isConnected);
-    const nextSessionId: string = domStreaming ? app.dataset.activeSessionId || storedStreamingSessionId : storedStreamingSessionId;
+    const nextSessionId: string = domStreaming ? app.dataset.activeSessionId || "" : "";
     const previousSessionId: string = chatStreamingSessionId;
 
     if (previousSessionId === nextSessionId) {
@@ -494,7 +458,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     app.dataset.activeSessionId = sessionId || "";
     reconcileActiveWorkspace();
     storePersistedSelection(app.dataset.activeSessionId || "", app.dataset.activeWorkspaceId || "");
-    recheckStoredSessionLiveState(app.dataset.activeSessionId || "");
     renderCurrentWorkspaces();
     emitExternalActiveSessionSelected(previousSessionId);
     syncChatStreamingIndicator();
@@ -729,11 +692,9 @@ export function createSidebarController(app: AppElement, context: PluginContext 
         directWorkspaces,
         pendingSessionNameOverlays,
       );
-      const storedStreamingSessionIds: Set<string> = new Set(storedChatStreamingSessionIds());
       if (
         comparableDirectWorkspaces.length > 0 &&
-        workspaceContentSignature(comparableDirectWorkspaces, storedStreamingSessionIds) !==
-          workspaceContentSignature(workspaces, storedStreamingSessionIds)
+        workspaceContentSignature(comparableDirectWorkspaces) !== workspaceContentSignature(workspaces)
       ) {
         hostWorkspaceRecheckAttempts = 0;
         void refreshCurrentWorkspaces();
@@ -845,7 +806,6 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       clearedSessionWorkspaceIds,
       app,
     );
-    recheckStoredSessionLiveState();
     if (chatStreamingSessionId) {
       chatStreamingSnapshots = {
         ...chatStreamingSnapshots,
@@ -1183,68 +1143,6 @@ function snapshotSession(
 ): ChatStreamingSessionSnapshot {
   const session: SidebarSession | undefined = findSessionById(workspaces, sessionId) || findSessionById(appWorkspaces, sessionId);
   return { live: session?.live, status: session?.status };
-}
-
-function storedChatStreamingSessionId(): string {
-  return storedChatStreamingSessionIds()[0] || "";
-}
-
-function storedChatStreamingSessionIds(): string[] {
-  const storedChatSessions: unknown = readStoredChatSessions();
-
-  if (!isRecord(storedChatSessions)) {
-    return [];
-  }
-
-  const sessions: unknown = storedChatSessions.sessions;
-  if (!Array.isArray(sessions)) {
-    return [];
-  }
-
-  return sessions
-    .filter((session: unknown): boolean => chatSessionIsStreaming(session))
-    .map((session: unknown): string => isRecord(session) ? stringValue(session.id) : "")
-    .filter((sessionId: string): boolean => sessionId !== "");
-}
-
-function readStoredChatSessions(): unknown {
-  try {
-    return JSON.parse(globalThis.localStorage?.getItem(CHAT_SESSION_STORAGE_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function chatSessionIsStreaming(session: unknown): boolean {
-  if (!isRecord(session)) {
-    return false;
-  }
-
-  if (session.streaming === true || stringValue(session.status).toLowerCase() === "streaming") {
-    return true;
-  }
-
-  const messages: unknown = session.messages;
-  if (!Array.isArray(messages)) {
-    return false;
-  }
-
-  return messages.some(chatMessageIsStreaming);
-}
-
-function chatMessageIsStreaming(message: unknown): boolean {
-  if (!isRecord(message)) {
-    return false;
-  }
-
-  if (message.streaming === true || stringValue(message.status).toLowerCase() === "streaming") {
-    return true;
-  }
-
-  const toolCalls: unknown = message.toolCalls;
-  return Array.isArray(toolCalls) && toolCalls.some((toolCall: unknown): boolean => {
-    return isRecord(toolCall) && ["pending", "running", "streaming"].includes(stringValue(toolCall.status).toLowerCase());
-  });
 }
 
 function findSessionById(workspaces: SidebarWorkspace[], sessionId: string): SidebarSession | undefined {

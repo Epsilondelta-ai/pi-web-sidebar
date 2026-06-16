@@ -826,6 +826,40 @@ describe("pi-web-sidebar plugin", () => {
     }]);
   });
 
+  test("loadWorkspaces strips stale cached live state while preserving cached sessions", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [{
+      id: "w1",
+      live: true,
+      name: "cached name",
+      path: "/cached",
+      sessionCount: 1,
+      sessions: [{ id: "s1", active: true, live: true, name: "saved", status: "streaming", unread: true }],
+    }];
+    const directWorkspaces: SidebarWorkspace[] = [{ id: "w1", name: "direct name", path: "/direct", sessions: [] }];
+    app.testWorkspaces = directWorkspaces;
+    app.workspaceList = directWorkspaces;
+    const context = testContext(app, { initialWorkspaces: [], backend: async (method, options) => {
+      if (method === "load-workspace-cache") {
+        return { workspaces: cachedWorkspaces };
+      }
+
+      if (method === "validate-workspaces") {
+        return { workspaces: options.data?.workspaces || [] };
+      }
+
+      throw new Error(`unexpected backend call: ${method}`);
+    } });
+
+    expect(await loadWorkspaces(context, app)).toEqual([{
+      id: "w1",
+      name: "direct name",
+      path: "/direct",
+      sessionCount: 1,
+      sessions: [{ id: "s1", name: "saved" }],
+    }]);
+  });
+
   test("loadWorkspaces returns backend file cache before local stale cache", async () => {
     const app = setupApp();
     app.testWorkspaces = [];
@@ -1559,7 +1593,7 @@ describe("pi-web-sidebar plugin", () => {
     expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
   });
 
-  test("stored chat running tool call marks active session and workspace live after refresh", async () => {
+  test("stored chat localStorage running tool call does not mark sessions live", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
     app.dataset.activeWorkspaceId = "w1";
@@ -1575,21 +1609,9 @@ describe("pi-web-sidebar plugin", () => {
     controller.mount();
     await controller.refresh();
 
-    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
-    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
-    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session streaming");
-
-    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
-      activeSessionId: "s1",
-      sessions: [{
-        id: "s1",
-        messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "ok" }] }],
-      }],
-    }));
-    await controller.refresh();
-
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
     expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .session-indicator").title).toBe("session inactive");
   });
 
   test("full session live recheck refreshes backend state every sixty seconds", async () => {
@@ -1597,14 +1619,31 @@ describe("pi-web-sidebar plugin", () => {
     const originalSetTimeout: typeof globalThis.setTimeout = globalThis.setTimeout;
     const timers: { delay: number; handler: TimerHandler }[] = [];
     app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "scheduled", status: "idle" }] }];
-    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({ sessions: [] }));
     globalThis.setTimeout = ((handler: TimerHandler, timeout?: number): ReturnType<typeof globalThis.setTimeout> => {
       timers.push({ delay: Number(timeout || 0), handler });
       return 0 as unknown as ReturnType<typeof globalThis.setTimeout>;
     }) as unknown as typeof globalThis.setTimeout;
 
     try {
-      const controller = createSidebarController(app, testContext(app));
+      const controller = createSidebarController(app, testContext(app, { backend: async (method, options) => {
+        if (method === "load-workspace-cache") {
+          return { workspaces: [] };
+        }
+
+        if (method === "save-workspace-cache") {
+          return {};
+        }
+
+        if (method === "validate-workspaces") {
+          return { workspaces: options.data?.workspaces || [] };
+        }
+
+        if (method === "pi-status") {
+          return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
+        }
+
+        return {};
+      } }));
       controller.mount();
       await Promise.resolve();
       await Promise.resolve();
@@ -1619,8 +1658,7 @@ describe("pi-web-sidebar plugin", () => {
       }
 
       recheckTimer.handler();
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise((resolve: (value: void) => void): void => { originalSetTimeout(resolve, 0); });
 
       expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
       expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
@@ -1630,126 +1668,24 @@ describe("pi-web-sidebar plugin", () => {
     }
   });
 
-  test("stored chat running marks sessions live on initial mount before refresh", async () => {
+  test("stored chat localStorage does not mark initial or clicked sessions live", async () => {
     const app = setupApp();
-    const refreshDeferred = deferred<unknown>();
-    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "initial", status: "idle" }] }];
+    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "click", status: "idle" }] }];
     localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
       sessions: [{
         id: "s1",
         messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
       }],
     }));
-    const controller = createSidebarController(app, testContext(app, { backend: async (method) => {
-      if (method === "load-workspace-cache") {
-        return refreshDeferred.promise;
-      }
-
-      if (method === "pi-status") {
-        return { available: true, checkedAt: "2026-06-07T00:00:00.000Z" };
-      }
-
-      return { workspaces: app.testWorkspaces };
-    } }));
-    controller.mount();
-
-    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
-    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
-    refreshDeferred.resolve({ workspaces: [] });
-    controller.dispose();
-  });
-
-  test("session click checks stored live state immediately", async () => {
-    const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", sessions: [{ id: "s1", name: "click", status: "idle" }] }];
-    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({ sessions: [] }));
     const controller = createSidebarController(app, testContext(app));
     controller.mount();
     await Promise.resolve();
 
     expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
-    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
-      sessions: [{
-        id: "s1",
-        messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
-      }],
-    }));
     requireElement<HTMLElement>(app, "[data-session='s1']").click();
 
-    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
-    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
-  });
-
-  test("stored chat running marks inactive unclicked sessions live after refresh", async () => {
-    const app = setupApp();
-    app.dataset.activeSessionId = "s2";
-    app.dataset.activeWorkspaceId = "w2";
-    app.testWorkspaces = [
-      { id: "w1", name: "one", sessions: [{ id: "s1", name: "unclicked", status: "idle" }] },
-      { id: "w2", name: "two", sessions: [{ id: "s2", name: "selected", status: "idle" }] },
-    ];
-    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
-      activeSessionId: "s2",
-      sessions: [
-        {
-          id: "s1",
-          messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
-        },
-        {
-          id: "s2",
-          messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "ok" }] }],
-        },
-      ],
-    }));
-    const controller = createSidebarController(app, testContext(app));
-    controller.mount();
-    await controller.refresh();
-    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 20); });
-    const renderEvents: import("./src/types").SidebarActionEvent[] = [];
-    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
-      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
-        if (event.type === "state" && event.reason === "render-workspaces") {
-          renderEvents.push(event);
-        }
-      });
-    await new Promise((resolve: (value: void) => void): void => { setTimeout(resolve, 260); });
-
-    expect(renderEvents.length).toBeLessThanOrEqual(1);
-    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeTruthy();
-    expect(app.querySelector("[data-session='s2'] .session-indicator.live")).toBeFalsy();
-    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
-    expect(app.querySelector("[data-workspace-group='w2'] .ws-name .dot.live")).toBeFalsy();
-  });
-
-  test("stored chat running keeps collapsed workspace green and clickable", async () => {
-    const app = setupApp();
-    app.dataset.activeSessionId = "s2";
-    app.dataset.activeWorkspaceId = "w2";
-    app.sidebarOpenWorkspaceId = "w2";
-    app.testWorkspaces = [
-      { id: "w1", name: "one", sessions: [{ id: "s1", name: "live", status: "idle" }] },
-      { id: "w2", name: "two", sessions: [{ id: "s2", name: "idle", status: "idle" }] },
-    ];
-    localStorage.setItem("pi-web-chat.sessions.v1", JSON.stringify({
-      activeSessionId: "s1",
-      sessions: [{
-        id: "s1",
-        messages: [{ role: "assistant", toolCalls: [{ name: "subagent", status: "running" }] }],
-      }],
-    }));
-    const controller = createSidebarController(app, testContext(app));
-    controller.mount();
-    await controller.refresh();
-
-    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] > .sessions").hidden).toBe(true);
-    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeTruthy();
-
-    app.sidebarOpenWorkspaceId = "w1";
-    requireElement(app, "[data-workspace='w1'].ws-row")
-      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
-
-    expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] > .sessions").hidden).toBe(false);
-    expect(app.sidebarOpenWorkspaceId).toBe("w1");
+    expect(app.querySelector("[data-session='s1'] .session-indicator.live")).toBeFalsy();
+    expect(app.querySelector("[data-workspace-group='w1'] .ws-name .dot.live")).toBeFalsy();
   });
 
   test("chat streaming DOM restores latest workspace refresh state", async () => {
