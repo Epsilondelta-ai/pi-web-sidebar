@@ -228,6 +228,12 @@ function requireElement<T extends Element = HTMLElement>(root: ParentNode, selec
   return element;
 }
 
+function setupSingleWorkspaceSessions(app: TestApp, sessions: SidebarWorkspace["sessions"] = []): void {
+  app.dataset.activeSessionId = sessions[0]?.id || "";
+  app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions }];
+  app.workspaceList = app.testWorkspaces;
+}
+
 function deferred<T>(): Deferred<T> {
   let resolveDeferred: ((value: T) => void) | undefined;
   const promise: Promise<T> = new Promise((resolve: (value: T) => void): void => {
@@ -1366,6 +1372,27 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-workspace-group='w1'] .ws-name .dot").title).toBe("workspace live");
   });
 
+  test("session changed title overlays placeholder refresh until backend name arrives", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    const controller = createSidebarController(app, testContext(app));
+    controller.mount();
+    await Promise.resolve();
+
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({ sessionId: "s1", title: "draft" });
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("draft");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    await controller.refresh();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("draft");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "backend name" }] }];
+    await controller.refresh();
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("backend name");
+
+    controller.dispose();
+  });
+
   test("chat streaming DOM marks active session and workspace indicators green", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
@@ -1999,6 +2026,41 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("new title");
   });
 
+  test("session changed name overlay survives placeholder refresh until backend rename appears", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    globalThis.piWeb?.subject<Record<string, unknown>>("session.changed").next({
+      sessionId: "s1",
+      name: "renamed chat",
+    });
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("renamed chat");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("renamed chat");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("renamed chat");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "backend renamed" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("backend rena...");
+
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "New chat" }] }];
+    await controller.refresh();
+
+    expect(requireElement<HTMLElement>(app, "[data-session='s1'] .title").textContent).toBe("New chat");
+  });
+
   test("session menu rename prompts and persists through backend", async () => {
     const app = setupApp();
     const backendCalls: BackendCallLog[] = [];
@@ -2249,14 +2311,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("delete all sessions asks for confirmation before deleting", async () => {
     const app = setupApp();
-    app.dataset.activeSessionId = "s1";
-    app.testWorkspaces = [{
-      id: "w1",
-      name: "one",
-      path: "/one",
-      sessions: [{ id: "s1", name: "new session" }],
-    }];
-    app.workspaceList = app.testWorkspaces;
+    setupSingleWorkspaceSessions(app, [{ id: "s1", name: "new session" }]);
     const confirmMessages: string[] = [];
     globalThis.confirm = (message?: string): boolean => {
       confirmMessages.push(String(message || ""));
@@ -2292,14 +2347,10 @@ describe("pi-web-sidebar plugin", () => {
 
   test("delete all sessions keeps sidebar shell", async () => {
     const app = setupApp();
-    app.dataset.activeSessionId = "s1";
-    app.testWorkspaces = [{
-      id: "w1",
-      name: "one",
-      path: "/one",
-      sessions: [{ id: "s1", name: "new session" }, { id: "child", parentId: "s1", name: "child" }],
-    }];
-    app.workspaceList = app.testWorkspaces;
+    setupSingleWorkspaceSessions(app, [
+      { id: "s1", name: "new session" },
+      { id: "child", parentId: "s1", name: "child" },
+    ]);
     const deletedPayloads: Record<string, unknown>[] = [];
     const sidebarEvents: import("./src/types").SidebarActionEvent[] = [];
     globalThis.piWeb!.subject<Record<string, unknown>>("session.deleted").subscribe((payload) => {
@@ -2363,8 +2414,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("delete all sessions publishes active end for every requested id when backend deleted list is empty", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "optimistic", name: "New chat" }] }];
-    app.workspaceList = app.testWorkspaces;
+    setupSingleWorkspaceSessions(app, [{ id: "optimistic", name: "New chat" }]);
     const activeEndPayloads: Record<string, unknown>[] = [];
     const context = testContext(app, {
       backend: async (method: string): Promise<unknown> => {
@@ -2398,8 +2448,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("delete all sessions publishes backend-expanded deleted ids", async () => {
     const app = setupApp();
-    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "new session" }] }];
-    app.workspaceList = app.testWorkspaces;
+    setupSingleWorkspaceSessions(app, [{ id: "s1", name: "new session" }]);
     const deletedPayloads: Record<string, unknown>[] = [];
     globalThis.piWeb!.subject<Record<string, unknown>>("session.deleted").subscribe((payload) => {
       deletedPayloads.push(payload);

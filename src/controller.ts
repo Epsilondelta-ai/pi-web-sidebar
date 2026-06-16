@@ -39,6 +39,11 @@ type ChatStreamingSessionSnapshot = {
   status?: string;
 };
 
+type SessionNameOverlayResult = {
+  overlays: Record<string, string>;
+  workspaces: SidebarWorkspace[];
+};
+
 const HOST_WORKSPACE_RECHECK_INTERVAL_MS = 100;
 const HOST_WORKSPACE_RECHECK_MAX_ATTEMPTS = 30;
 const CHAT_SESSION_STORAGE_KEY = "pi-web-chat.sessions.v1";
@@ -68,6 +73,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let hostWorkspaceRecheckAttempts: number = 0;
   let channelSubscriptions: SubscriptionLike[] = [];
   let optimisticSessionsByWorkspace: Record<string, OptimisticSidebarSession[]> = {};
+  let pendingSessionNameOverlays: Record<string, string> = {};
   let workspaceCacheSaveInFlight: boolean = false;
   let publishingActiveSessionId: boolean = false;
   let queuedWorkspaceCacheSave: SidebarWorkspace[] | undefined;
@@ -587,6 +593,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     const activeSessionDeleted: boolean = deletedSessionIds.includes(app.dataset.activeSessionId || "");
     for (const deletedSessionId of deletedSessionIds) {
       optimisticSessionsByWorkspace = removeOptimisticSession(optimisticSessionsByWorkspace, deletedSessionId);
+      pendingSessionNameOverlays = removeSessionNameOverlay(pendingSessionNameOverlays, deletedSessionId);
       workspaces = removeWorkspaceSession(workspaces, workspaceId, deletedSessionId);
     }
 
@@ -626,6 +633,11 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     }
 
     clearedSessionWorkspaceIds.add(workspaceId);
+    pendingSessionNameOverlays = removeWorkspaceSessionNameOverlays(
+      pendingSessionNameOverlays,
+      workspaces,
+      workspaceId,
+    );
     optimisticSessionsByWorkspace = { ...optimisticSessionsByWorkspace, [workspaceId]: [] };
     workspaces = withoutWorkspaceSessions(workspaces, app, workspaceId);
     app.workspaceList = withoutWorkspaceSessions(app.workspaceList || [], app, workspaceId);
@@ -662,6 +674,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
 
     if (name) {
       patch.name = normalizeSessionName(name);
+      pendingSessionNameOverlays = { ...pendingSessionNameOverlays, [sessionId]: patch.name };
     }
 
     if (status) {
@@ -712,10 +725,14 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       }
 
       const directWorkspaces: SidebarWorkspace[] = directWorkspaceList();
+      const comparableDirectWorkspaces: SidebarWorkspace[] = applySessionNameOverlaySnapshot(
+        directWorkspaces,
+        pendingSessionNameOverlays,
+      );
       const storedStreamingSessionIds: Set<string> = new Set(storedChatStreamingSessionIds());
       if (
-        directWorkspaces.length > 0 &&
-        workspaceContentSignature(directWorkspaces, storedStreamingSessionIds) !==
+        comparableDirectWorkspaces.length > 0 &&
+        workspaceContentSignature(comparableDirectWorkspaces, storedStreamingSessionIds) !==
           workspaceContentSignature(workspaces, storedStreamingSessionIds)
       ) {
         hostWorkspaceRecheckAttempts = 0;
@@ -807,17 +824,24 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     const refreshedWorkspaces: SidebarWorkspace[] = options.emptySessionsForWorkspaceId
       ? withoutWorkspaceSessions(nextWorkspaces, app, options.emptySessionsForWorkspaceId)
       : nextWorkspaces;
-    const replacementSession: SelectedSidebarSession = actualSessionReplacingOptimistic(
+    const overlayResult: SessionNameOverlayResult = applyPendingSessionNameOverlays(
       refreshedWorkspaces,
+      pendingSessionNameOverlays,
+      step === "actual",
+    );
+    pendingSessionNameOverlays = overlayResult.overlays;
+    const overlaidWorkspaces: SidebarWorkspace[] = overlayResult.workspaces;
+    const replacementSession: SelectedSidebarSession = actualSessionReplacingOptimistic(
+      overlaidWorkspaces,
       optimisticSessionsByWorkspace,
       app.dataset.activeSessionId || "",
     );
     optimisticSessionsByWorkspace = retainOptimisticSessionsUntilActualAppears(
       optimisticSessionsByWorkspace,
-      refreshedWorkspaces,
+      overlaidWorkspaces,
     );
     workspaces = clearWorkspaceSessionsById(
-      mergeOptimisticSessions(refreshedWorkspaces, optimisticSessionsByWorkspace),
+      mergeOptimisticSessions(overlaidWorkspaces, optimisticSessionsByWorkspace),
       clearedSessionWorkspaceIds,
       app,
     );
@@ -1257,6 +1281,96 @@ function updateWorkspaceSession(
 
     return { ...workspace, live, sessions };
   });
+}
+
+function applyPendingSessionNameOverlays(
+  workspaces: SidebarWorkspace[],
+  overlays: Record<string, string>,
+  clearActualNames: boolean,
+): SessionNameOverlayResult {
+  const nextOverlays: Record<string, string> = { ...overlays };
+  const nextWorkspaces: SidebarWorkspace[] = workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    const sessions: SidebarSession[] = (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
+      const overlayName: string = overlays[session.id] || "";
+
+      if (!overlayName) {
+        return session;
+      }
+
+      if (shouldKeepSessionNameOverlay(session.name || "")) {
+        return { ...session, name: overlayName };
+      }
+
+      if (clearActualNames) {
+        delete nextOverlays[session.id];
+      }
+
+      return session;
+    });
+
+    return { ...workspace, sessions };
+  });
+
+  return { overlays: nextOverlays, workspaces: nextWorkspaces };
+}
+
+function applySessionNameOverlaySnapshot(
+  workspaces: SidebarWorkspace[],
+  overlays: Record<string, string>,
+): SidebarWorkspace[] {
+  if (Object.keys(overlays).length === 0) {
+    return workspaces;
+  }
+
+  return workspaces.map((workspace: SidebarWorkspace): SidebarWorkspace => {
+    const sessions: SidebarSession[] = (workspace.sessions || []).map((session: SidebarSession): SidebarSession => {
+      const overlayName: string = overlays[session.id] || "";
+
+      if (overlayName && shouldKeepSessionNameOverlay(session.name || "")) {
+        return { ...session, name: overlayName };
+      }
+
+      return session;
+    });
+
+    return { ...workspace, sessions };
+  });
+}
+
+function shouldKeepSessionNameOverlay(name: string): boolean {
+  const normalizedName: string = name.trim().toLowerCase();
+  return normalizedName === "" || normalizedName === "new chat";
+}
+
+function removeSessionNameOverlay(overlays: Record<string, string>, sessionId: string): Record<string, string> {
+  if (!overlays[sessionId]) {
+    return overlays;
+  }
+
+  const nextOverlays: Record<string, string> = { ...overlays };
+  delete nextOverlays[sessionId];
+  return nextOverlays;
+}
+
+function removeWorkspaceSessionNameOverlays(
+  overlays: Record<string, string>,
+  workspaces: SidebarWorkspace[],
+  workspaceId: string,
+): Record<string, string> {
+  const workspace: SidebarWorkspace | undefined = workspaces.find((item: SidebarWorkspace): boolean => {
+    return item.id === workspaceId;
+  });
+
+  if (!workspace) {
+    return overlays;
+  }
+
+  let nextOverlays: Record<string, string> = overlays;
+  for (const session of workspace.sessions || []) {
+    nextOverlays = removeSessionNameOverlay(nextOverlays, session.id);
+  }
+
+  return nextOverlays;
 }
 
 function normalizeSessionName(name: string): string {
