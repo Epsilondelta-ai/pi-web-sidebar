@@ -403,11 +403,19 @@ func decorateSessionRecord(session map[string]any, path string, sessionDir strin
 
 func sessionIDFromSessionFileName(name string) string {
 	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	if sidebarSessionID(base) {
+		return base
+	}
+
 	index := strings.LastIndex(base, "_")
 	if index < 0 || index == len(base)-1 {
 		return ""
 	}
 	return base[index+1:]
+}
+
+func sidebarSessionID(id string) bool {
+	return strings.HasPrefix(id, "sidebar-") && len(id) > len("sidebar-")
 }
 
 func sessionKind(session map[string]any, path string) string {
