@@ -82,6 +82,40 @@ func loadValidatedWorkspaceCacheForTest(t *testing.T) request {
 	return result
 }
 
+func loadSingleSessionFromTestCache(t *testing.T, sessionID string, sessionData []byte, cachedSessions string) map[string]any {
+	t.Helper()
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	sessionRoot := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("clean workspace: %v", err)
+	}
+	sessionDir := piSessionDirForCWDWithRoot(sessionRoot, cleanWorkspace)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("create session dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, sessionID+".jsonl"), sessionData, 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+	cache := `{"workspaces":[{"id":"w1","path":"` + workspace + `","sessions":` + cachedSessions + `}]}`
+	if err := os.WriteFile(filepath.Join(cacheDir, "workspaces.json"), []byte(cache), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionRoot)
+
+	return loadValidatedWorkspaceCacheForTest(t)["workspaces"].([]any)[0].(map[string]any)["sessions"].([]any)[0].(map[string]any)
+}
+
 func TestLoadWorkspaceCacheReturnsRawFileBeforeSessionValidation(t *testing.T) {
 	home := t.TempDir()
 	cacheDir := filepath.Join(home, ".pi-web", "pi-web-sidebar")
@@ -640,6 +674,28 @@ func TestLoadWorkspaceCacheNamesUncachedSessionFromFirstChat(t *testing.T) {
 	}
 	if _, ok := session["title"]; ok {
 		t.Fatalf("session = %v, want no legacy title", session)
+	}
+}
+
+func TestLoadWorkspaceCachePromotesNewChatPlaceholderFromFirstChat(t *testing.T) {
+	sessionData := []byte(
+		`{"id":"sidebar-1","name":"New chat"}` + "\n" +
+			`{"type":"message","message":{"role":"user","content":"새로고침 후 유지"}}` + "\n",
+	)
+	session := loadSingleSessionFromTestCache(t, "sidebar-1", sessionData, `[{"id":"sidebar-1","name":"New chat"}]`)
+	if session["name"] != "새로고침 후 유지" {
+		t.Fatalf("session = %v, want first chat name promoted over placeholder", session)
+	}
+}
+
+func TestLoadWorkspaceCacheKeepsExplicitSessionNameOverFirstChat(t *testing.T) {
+	sessionData := []byte(
+		`{"id":"explicit","name":"explicit name"}` + "\n" +
+			`{"type":"message","message":{"role":"user","content":"first chat"}}` + "\n",
+	)
+	session := loadSingleSessionFromTestCache(t, "explicit", sessionData, `[]`)
+	if session["name"] != "explicit name" {
+		t.Fatalf("session = %v, want explicit name", session)
 	}
 }
 
