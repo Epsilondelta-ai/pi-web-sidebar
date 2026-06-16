@@ -126,13 +126,13 @@ func sessionRecordFromFile(path string) map[string]any {
 			header["status"] = "idle"
 		}
 	}
+	mergeSessionName(header, firstChatName)
 	if tail.renameName != "" {
 		header["name"] = tail.renameName
 	}
 	if metadataName := sessionRenameMetadataName(filepath.Dir(path), stringFromAny(header["id"])); metadataName != "" {
 		header["name"] = metadataName
 	}
-	mergeSessionName(header, firstChatName)
 	normalizeSessionRecord(header)
 	return header
 }
@@ -178,9 +178,14 @@ func mergeSessionInfo(session map[string]any, info map[string]any) {
 }
 
 func mergeSessionName(session map[string]any, name string) {
-	if name != "" && strings.TrimSpace(stringFromAny(session["name"])) == "" {
+	currentName := strings.TrimSpace(stringFromAny(session["name"]))
+	if name != "" && (currentName == "" || sessionNameIsPlaceholder(currentName)) {
 		session["name"] = name
 	}
+}
+
+func sessionNameIsPlaceholder(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), "New chat")
 }
 
 func normalizeSessionRecord(session map[string]any) {
