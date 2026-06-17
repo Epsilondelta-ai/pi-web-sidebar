@@ -108,7 +108,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     resizeCleanup = bindResizer(wrap, app, sidebarBridge);
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
-    bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge);
+    bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge, renderCurrentWorkspaces);
     bindSidebarSessionEvents();
     bindPluginEventChannels();
     bindPiWebChannels();

@@ -187,6 +187,26 @@ export const PLUGIN_STYLE_TEXT: string = `
     padding-left: calc(6px + (var(--pi-web-sidebar-session-depth, 0) * 14px));
   }
 
+  [data-pi-web-sidebar-plugin] .workspace-group > .sessions .session-row.agent-parent-session {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  [data-pi-web-sidebar-plugin] .agent-session-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px; padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--pi-web-sidebar-fg-dim);
+    transform: rotate(90deg);
+    transition: transform 140ms ease, color 140ms ease;
+  }
+
+  [data-pi-web-sidebar-plugin] .agent-session-toggle[aria-expanded="false"] { transform: rotate(0deg); }
+  [data-pi-web-sidebar-plugin] .agent-session-toggle:hover { color: var(--pi-web-sidebar-accent); }
+  [data-pi-web-sidebar-plugin] .agent-session-toggle:disabled { cursor: default; opacity: 0.55; }
+
   [data-pi-web-sidebar-plugin] .session-row.child-session::before {
     content: "↳";
     position: absolute;

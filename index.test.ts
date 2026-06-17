@@ -1858,6 +1858,92 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='sub'] .meta").textContent).toBe("subagent");
     expect(requireElement<HTMLElement>(app, "[data-session='team'] .title").textContent).toBe("Emilia");
     expect(requireElement<HTMLElement>(app, "[data-session='team'] .meta").textContent).toBe("team agent");
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.agentChildCount).toBe("2");
+    expect(requireElement<HTMLElement>(app, "[data-session='parent'] .agent-session-toggle").getAttribute("aria-expanded"))
+      .toBe("true");
+    expect(requireElement<HTMLElement>(app, "[data-session='parent'] .meta").textContent).toBe("2 agents");
+  });
+
+  test("session agent disclosure collapses children and persists state", async () => {
+    const app: TestApp = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+        { id: "team", parentId: "parent", name: "team worker", kind: "team agent" },
+      ],
+    }];
+    const controller: ReturnType<typeof createSidebarController> = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+
+    requireElement<HTMLElement>(app, "[data-session='parent'] .agent-session-toggle").click();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-session='sub']")).toBeFalsy();
+    expect(app.querySelector("[data-session='team']")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.agentCollapsed).toBe("true");
+    expect(requireElement<HTMLElement>(app, "[data-session='parent'] .agent-session-toggle").getAttribute("aria-expanded"))
+      .toBe("false");
+    expect(JSON.parse(localStorage.getItem("pi.agentSessionCollapse") || "{}")).toEqual({ w1: ["parent"] });
+
+    controller.render(app.testWorkspaces);
+
+    expect(app.querySelector("[data-session='sub']")).toBeFalsy();
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.agentCollapsed).toBe("true");
+  });
+
+  test("session agent disclosure keeps rendered sessions when app workspace mirror is stale", async () => {
+    const app: TestApp = setupApp();
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+      ],
+    }];
+    const controller: ReturnType<typeof createSidebarController> = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    app.workspaceList = [];
+    requireElement<HTMLElement>(app, "[data-session='parent'] .agent-session-toggle").click();
+    await Promise.resolve();
+
+    expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.agentCollapsed).toBe("true");
+    expect(app.querySelector("[data-session='sub']")).toBeFalsy();
+  });
+
+  test("active agent descendant forces collapsed parent expanded", async () => {
+    const app: TestApp = setupApp();
+    app.dataset.activeSessionId = "sub";
+    app.dataset.activeWorkspaceId = "w1";
+    localStorage.setItem("pi.agentSessionCollapse", JSON.stringify({ w1: ["parent"] }));
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+      ],
+    }];
+    const controller: ReturnType<typeof createSidebarController> = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+
+    const toggle: HTMLButtonElement = requireElement(app, "[data-session='parent'] .agent-session-toggle");
+    expect(requireElement<HTMLElement>(app, "[data-session='sub']")).toBeTruthy();
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.agentCollapsed).toBe("false");
+    expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.agentForceOpen).toBe("true");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toBe("1 agent session visible because one is active");
+    expect(toggle.disabled).toBe(true);
   });
 
   test("orphan agent sessions keep child indentation while parent sessions stay flush", async () => {
@@ -1882,6 +1968,8 @@ describe("pi-web-sidebar plugin", () => {
     expect(requireElement<HTMLElement>(app, "[data-session='parent']").dataset.depth).toBe("0");
     expect(requireElement<HTMLElement>(app, "[data-session='sub']").dataset.depth).toBe("1");
     expect(requireElement<HTMLElement>(app, "[data-session='team']").dataset.depth).toBe("1");
+    expect(app.querySelector("[data-session='sub'] .agent-session-toggle")).toBeFalsy();
+    expect(app.querySelector("[data-session='team'] .agent-session-toggle")).toBeFalsy();
   });
 
   test("active subagent deletion selects parent session immediately", async () => {
@@ -2303,6 +2391,37 @@ describe("pi-web-sidebar plugin", () => {
 
     expect(app.querySelector("[data-workspace-group='w1']")).toBeTruthy();
     expect(app.querySelector("[data-workspace-group='w1'] .workspace-drag-handle")).toBeTruthy();
+  });
+
+  test("deleting a collapsed parent requests child agent deletion", async () => {
+    const app = setupApp();
+    localStorage.setItem("pi.agentSessionCollapse", JSON.stringify({ w1: ["parent"] }));
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      path: "/one",
+      sessions: [
+        { id: "parent", name: "parent" },
+        { id: "sub", parentId: "parent", name: "sub worker", kind: "subagent" },
+      ],
+    }];
+    const deletedIds: string[] = [];
+    app.deleteSession = async (sessionId: string): Promise<void> => {
+      deletedIds.push(sessionId);
+    };
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+    expect(app.querySelector("[data-session='sub']")).toBeFalsy();
+    requireElement(app, "[data-session='parent'] [data-action='session-menu-toggle']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    requireElement(app, "[data-session='parent'] [data-action='delete-session']")
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(deletedIds).toEqual(["parent", "sub"]);
   });
 
   test("delete all sessions asks for confirmation before deleting", async () => {
