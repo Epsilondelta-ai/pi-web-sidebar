@@ -4,3 +4,4 @@ node_modules/
 .pi/npm
 .pi/pi-web.json
 .pi/sessions/
+.pi/tasks/

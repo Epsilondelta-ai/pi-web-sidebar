@@ -7,6 +7,7 @@ import {
 } from "./api";
 import { ACTIVE_SESSION_KEY, ACTIVE_WORKSPACE_KEY, PLUGIN_PANEL_ATTR } from "./constants";
 import { collapseSidebarLayout, routeWorkspace } from "./layout";
+import { toggleCollapsedAgentSession } from "./render-order";
 import { markSelectedSession } from "./render";
 import type {
   AppElement,
@@ -18,6 +19,7 @@ import type {
 } from "./types";
 
 type RefreshWorkspaces = (options?: { allowEmpty?: boolean; emptySessionsForWorkspaceId?: string }) => Promise<SidebarWorkspace[]>;
+type RenderWorkspaces = () => void;
 type RenamedSession = SidebarSession & { workspaceId: string };
 
 export function bindWorkspaceActions(
@@ -26,6 +28,7 @@ export function bindWorkspaceActions(
   context: PluginContext,
   refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
+  renderWorkspaces: RenderWorkspaces,
 ): void {
   if (wrap.dataset.piWebSidebarWorkspaceActionsBound === "true") {
     return;
@@ -45,7 +48,7 @@ export function bindWorkspaceActions(
       event.stopPropagation();
     }
 
-    if (await handleWorkspaceAction(action, target, app, context, refreshWorkspaces, sidebarBridge)) {
+    if (await handleWorkspaceAction(action, target, app, context, refreshWorkspaces, sidebarBridge, renderWorkspaces)) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -64,6 +67,7 @@ function shouldHandleActionInsidePlugin(action: string): boolean {
     "session-menu-toggle",
     "rename-session",
     "delete-session",
+    "toggle-session-agents",
   ].includes(action);
 }
 
@@ -74,6 +78,7 @@ async function handleWorkspaceAction(
   context: PluginContext,
   refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
+  renderWorkspaces: RenderWorkspaces,
 ): Promise<boolean> {
   if (action === "refresh-workspaces") {
     await refreshFromButton(target, refreshWorkspaces, sidebarBridge);
@@ -87,7 +92,7 @@ async function handleWorkspaceAction(
     return true;
   }
 
-  return handleMutatingWorkspaceAction(action, target, app, context, refreshWorkspaces, sidebarBridge);
+  return handleMutatingWorkspaceAction(action, target, app, context, refreshWorkspaces, sidebarBridge, renderWorkspaces);
 }
 
 async function refreshFromButton(
@@ -118,6 +123,7 @@ async function handleMutatingWorkspaceAction(
   context: PluginContext,
   refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
+  renderWorkspaces: RenderWorkspaces,
 ): Promise<boolean> {
   if (action === "delete-workspace") {
     return deleteWorkspaceAction(target, app, refreshWorkspaces, sidebarBridge);
@@ -169,7 +175,7 @@ async function handleMutatingWorkspaceAction(
     return true;
   }
 
-  return handleSessionAction(action, target, app, context, refreshWorkspaces, sidebarBridge);
+  return handleSessionAction(action, target, app, context, refreshWorkspaces, sidebarBridge, renderWorkspaces);
 }
 
 function confirmDeleteWorkspaceSessions(workspaceId: string, sessions: SidebarSession[]): boolean {
@@ -203,7 +209,23 @@ async function handleSessionAction(
   context: PluginContext,
   refreshWorkspaces: RefreshWorkspaces,
   sidebarBridge: SidebarBridge,
+  renderWorkspaces: RenderWorkspaces,
 ): Promise<boolean> {
+  if (action === "toggle-session-agents") {
+    const workspaceId: string = target.dataset.workspace || target.closest<HTMLElement>(".session-row")?.dataset.workspace || "";
+    const sessionId: string = target.dataset.session || target.closest<HTMLElement>(".session-row")?.dataset.session || "";
+
+    if (!workspaceId || !sessionId || (target as HTMLButtonElement).disabled) {
+      return true;
+    }
+
+    const collapsed: boolean = toggleCollapsedAgentSession(workspaceId, sessionId);
+    renderWorkspaces();
+    sidebarBridge.emitEvent("toggle-session-agents", { collapsed, sessionId, workspaceId });
+    sidebarBridge.emitState("toggle-session-agents");
+    return true;
+  }
+
   if (action === "collapse-sidebar") {
     collapseSidebarLayout(app, true);
     sidebarBridge.emitEvent("collapse-sidebar", {});

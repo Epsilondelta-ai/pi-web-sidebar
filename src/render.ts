@@ -1,5 +1,5 @@
 import { ICONS, PLUGIN_PANEL_ATTR } from "./constants";
-import { orderedSessionTree, orderedWorkspaces } from "./render-order";
+import { orderedSessionTree, orderedWorkspaces, readCollapsedAgentSessionIds } from "./render-order";
 import { syncTopbarCrumb } from "./topbar-crumb";
 import {
   sessionBadges,
@@ -9,6 +9,7 @@ import {
   workspaceSessionCount,
 } from "./render-session-utils";
 import type { AppElement, SidebarSession, SidebarWorkspace } from "./types";
+import type { OrderedSessionRow } from "./render-order";
 
 export function renderPluginWorkspaceList(
   wrap: HTMLElement | null,
@@ -152,10 +153,14 @@ function createWorkspaceDeleteButton(workspace: SidebarWorkspace): HTMLElement {
 function createSessionsList(workspace: SidebarWorkspace, app: AppElement, open: boolean): HTMLElement {
   const sessions: HTMLDivElement = document.createElement("div");
   sessions.className = "sessions";
+  sessions.id = workspaceSessionsId(workspace.id);
   sessions.hidden = !open;
 
-  orderedSessionTree(workspace).forEach((item: { session: SidebarSession; depth: number }): void => {
-    sessions.append(createPluginSessionRow(item.session, workspace, app, item.depth));
+  orderedSessionTree(workspace, {
+    activeSessionId: app.dataset.activeSessionId || "",
+    collapsedSessionIds: readCollapsedAgentSessionIds(workspace.id),
+  }).forEach((item: OrderedSessionRow): void => {
+    sessions.append(createPluginSessionRow(item.session, workspace, app, item));
   });
 
   if (workspace.sessions?.length) {
@@ -170,12 +175,18 @@ function createPluginSessionRow(
   session: SidebarSession,
   workspace: SidebarWorkspace,
   app: AppElement,
-  depth: number,
+  item: OrderedSessionRow,
 ): HTMLElement {
   const selected: boolean = session.id === app.dataset.activeSessionId;
   const nameText: string = sessionDisplayName(session);
   const row: HTMLDivElement = document.createElement("div");
-  row.className = ["session-row", selected && "active", selected && "selected", session.parentId && "child-session"]
+  row.className = [
+    "session-row",
+    selected && "active",
+    selected && "selected",
+    session.parentId && "child-session",
+    item.agentChildCount > 0 && "agent-parent-session",
+  ]
     .filter(Boolean)
     .join(" ");
   row.dataset.session = session.id;
@@ -183,23 +194,64 @@ function createPluginSessionRow(
   row.dataset.title = nameText;
   row.dataset.fullTitle = session.name || session.id;
   row.dataset.lastUsed = session.lastUsed || "";
-  row.dataset.depth = String(depth);
-  row.style.setProperty("--pi-web-sidebar-session-depth", String(depth));
+  row.dataset.depth = String(item.depth);
+  row.style.setProperty("--pi-web-sidebar-session-depth", String(item.depth));
+
+  if (item.agentChildCount > 0) {
+    row.dataset.agentParent = "true";
+    row.dataset.agentCollapsed = String(item.collapsed);
+    row.dataset.agentChildCount = String(item.agentChildCount);
+    row.dataset.agentForceOpen = String(item.forceOpen);
+  }
 
   if (session.parentId) {
     row.dataset.parentSession = session.parentId;
   }
 
   row.setAttribute("aria-current", selected ? "true" : "false");
+
+  if (item.agentChildCount > 0) {
+    row.append(createAgentToggleButton(session, workspace.id, item));
+  }
+
   row.append(
-    createSessionMain(session, workspace.id, nameText),
+    createSessionMain(session, workspace.id, nameText, item.agentChildCount),
     createSessionMenuButton(session),
     createSessionMenu(session),
   );
   return row;
 }
 
-function createSessionMain(session: SidebarSession, workspaceId: string, nameText: string): HTMLElement {
+function createAgentToggleButton(session: SidebarSession, workspaceId: string, item: OrderedSessionRow): HTMLElement {
+  const button: HTMLButtonElement = document.createElement("button");
+  const agentLabel: string = item.agentChildCount === 1 ? "1 agent session" : `${item.agentChildCount} agent sessions`;
+  button.type = "button";
+  button.className = "agent-session-toggle";
+  button.dataset.action = "toggle-session-agents";
+  button.dataset.session = session.id;
+  button.dataset.workspace = workspaceId;
+  button.disabled = item.forceOpen;
+  button.setAttribute("aria-controls", workspaceSessionsId(workspaceId));
+  button.setAttribute("aria-expanded", String(!item.collapsed));
+  button.setAttribute("aria-label", agentToggleLabel(item, agentLabel));
+  button.textContent = "▸";
+  return button;
+}
+
+function agentToggleLabel(item: OrderedSessionRow, agentLabel: string): string {
+  if (item.forceOpen) {
+    return `${agentLabel} visible because one is active`;
+  }
+
+  return `${item.collapsed ? "show" : "hide"} ${agentLabel}`;
+}
+
+function createSessionMain(
+  session: SidebarSession,
+  workspaceId: string,
+  nameText: string,
+  agentChildCount: number = 0,
+): HTMLElement {
   const main: HTMLButtonElement = document.createElement("button");
   const dot: HTMLSpanElement = document.createElement("span");
   const label: HTMLSpanElement = document.createElement("span");
@@ -217,10 +269,21 @@ function createSessionMain(session: SidebarSession, workspaceId: string, nameTex
   label.className = "title";
   label.textContent = nameText;
   meta.className = "meta";
-  meta.textContent = sessionBadges(session).join(" · ");
+  meta.textContent = sessionMetaText(session, agentChildCount);
   meta.hidden = !meta.textContent;
   main.append(dot, label, meta);
   return main;
+}
+
+function sessionMetaText(session: SidebarSession, agentChildCount: number): string {
+  const badges: string[] = sessionBadges(session);
+
+  if (agentChildCount > 0) {
+    const agentLabel: string = agentChildCount === 1 ? "1 agent" : `${agentChildCount} agents`;
+    badges.push(agentLabel);
+  }
+
+  return badges.join(" · ");
 }
 
 function createSessionMenuButton(session: SidebarSession): HTMLElement {
@@ -276,5 +339,13 @@ function workspaceIndicatorLabel(workspace: SidebarWorkspace): string {
 }
 
 function sessionMenuId(sessionId: string): string {
-  return `session-menu-${String(sessionId).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  return `session-menu-${safeDomId(sessionId)}`;
+}
+
+function workspaceSessionsId(workspaceId: string): string {
+  return `workspace-sessions-${safeDomId(workspaceId)}`;
+}
+
+function safeDomId(value: string): string {
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, "-");
 }
