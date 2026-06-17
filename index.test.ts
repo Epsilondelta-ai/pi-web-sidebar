@@ -1946,6 +1946,29 @@ describe("pi-web-sidebar plugin", () => {
     expect(toggle.disabled).toBe(true);
   });
 
+  test("cyclic parent links do not hang agent tree rendering", async () => {
+    const app: TestApp = setupApp();
+    app.dataset.activeSessionId = "a";
+    app.dataset.activeWorkspaceId = "w1";
+    app.testWorkspaces = [{
+      id: "w1",
+      name: "one",
+      sessions: [
+        { id: "a", parentId: "b", name: "a", kind: "subagent" },
+        { id: "b", parentId: "a", name: "b", kind: "team agent" },
+      ],
+    }];
+    const controller: ReturnType<typeof createSidebarController> = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    await Promise.resolve();
+
+    const rows: HTMLElement[] = [...app.querySelectorAll<HTMLElement>("[data-workspace-group='w1'] .session-row[data-session]")];
+    expect(rows.map((row: HTMLElement): string => row.dataset.session || "")).toEqual(["a", "b"]);
+    expect(requireElement<HTMLElement>(app, "[data-session='a']").dataset.agentChildCount).toBe("1");
+    expect(requireElement<HTMLElement>(app, "[data-session='b']").dataset.agentChildCount).toBe("1");
+  });
+
   test("orphan agent sessions keep child indentation while parent sessions stay flush", async () => {
     const app: TestApp = setupApp();
     app.testWorkspaces = [{

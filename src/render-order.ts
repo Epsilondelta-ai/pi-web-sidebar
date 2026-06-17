@@ -116,7 +116,7 @@ function forcedOpenSessionIds(sessions: SidebarSession[], activeSessionId: strin
   const openIds: Set<string> = new Set();
   let parentId: string = byId.get(activeSessionId)?.parentId || "";
 
-  while (parentId) {
+  while (parentId && !openIds.has(parentId)) {
     openIds.add(parentId);
     parentId = byId.get(parentId)?.parentId || "";
   }
@@ -149,27 +149,32 @@ function agentDescendantCounts(
   const counts: Map<string, number> = new Map();
 
   sessions.forEach((session: SidebarSession): void => {
-    countAgentDescendants(session.id, byParentId, counts);
+    counts.set(session.id, countAgentDescendants(session.id, byParentId));
   });
 
   return counts;
 }
 
-function countAgentDescendants(
-  sessionId: string,
-  byParentId: Map<string, SidebarSession[]>,
-  counts: Map<string, number>,
-): number {
-  const cachedCount: number | undefined = counts.get(sessionId);
-  if (cachedCount !== undefined) {
-    return cachedCount;
+function countAgentDescendants(sessionId: string, byParentId: Map<string, SidebarSession[]>): number {
+  let count = 0;
+  const pending: SidebarSession[] = [...byParentId.get(sessionId) || []];
+  const seenIds: Set<string> = new Set([sessionId]);
+
+  while (pending.length > 0) {
+    const session: SidebarSession | undefined = pending.pop();
+    if (!session || seenIds.has(session.id)) {
+      continue;
+    }
+
+    seenIds.add(session.id);
+
+    if (agentSessionKind(session)) {
+      count += 1;
+    }
+
+    pending.push(...byParentId.get(session.id) || []);
   }
 
-  const count: number = (byParentId.get(sessionId) || []).reduce((total: number, child: SidebarSession): number => {
-    const childCount: number = agentSessionKind(child) ? 1 : 0;
-    return total + childCount + countAgentDescendants(child.id, byParentId, counts);
-  }, 0);
-  counts.set(sessionId, count);
   return count;
 }
 
