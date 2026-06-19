@@ -287,6 +287,13 @@ func TestCreateSessionWritesPrivatePiSessionFile(t *testing.T) {
 	if !strings.Contains(string(data), `"id":"`+sessionID+`"`) || !strings.Contains(string(data), `"type":"session"`) {
 		t.Fatalf("session file = %s, want session header with id", data)
 	}
+	cleanWorkspace, err := cleanPath(workspace)
+	if err != nil {
+		t.Fatalf("cleanPath error = %v", err)
+	}
+	if !strings.Contains(string(data), `"cwd":"`+cleanWorkspace+`"`) {
+		t.Fatalf("session file = %s, want session header with workspace cwd", data)
+	}
 	info, err := os.Stat(sessionPath)
 	if err != nil {
 		t.Fatalf("stat session file: %v", err)
