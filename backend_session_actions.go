@@ -57,7 +57,13 @@ func createSession(workspaceID string) (request, error) {
 
 	sessionID := newSessionID()
 	sessionPath := filepath.Join(sessionDir, sessionID+".jsonl")
-	header := request{"id": sessionID, "name": "New chat", "timestamp": time.Now().Format(time.RFC3339Nano), "type": "session"}
+	header := request{
+		"cwd":       workspacePath,
+		"id":        sessionID,
+		"name":      "New chat",
+		"timestamp": time.Now().Format(time.RFC3339Nano),
+		"type":      "session",
+	}
 	payload, err := json.Marshal(header)
 	if err != nil {
 		return request{}, err
