@@ -47,6 +47,15 @@ session, and events. When pi-web provides the shared `piWeb` Subject registry, t
 `plugin.pi-web-sidebar.state`, `plugin.pi-web-sidebar.piStatus`, `plugin.pi-web-sidebar.selectedSession`, and
 `plugin.pi-web-sidebar.event`.
 
+Workspace hydration reads the local `WORKSPACE_CACHE_KEY` localStorage value first for immediate sidebar paint, then
+loads the backend `load-workspace-cache` file cache, then reconciles direct workspace state. Cache validation must
+preserve both fallback paths so older or legacy backends can still hydrate the sidebar before direct workspace state
+arrives.
+
+Validation scope includes TypeScript sources, Go backend files, tests, and the generated distributable `index.js`.
+Changes that affect browser behavior must rebuild `index.js`, and test updates must cover both source behavior and the
+bundled entry smoke test.
+
 Build the browser plugin with:
 
 ```sh
