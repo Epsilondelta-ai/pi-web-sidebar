@@ -5,6 +5,7 @@ import { animateMovedSiblings, canMoveSessionNear, measureTops, movableSiblings 
 import { cssEscape, ensureSessionDragHandles, ensureWorkspaceDragHandles } from "./dom";
 import { createSidebar, installFallbackDragStyles, resetHostSidebarRenderState } from "./dom";
 import { applySidebarGrid, bindHeaderSidebarToggle, bindResizer, restoreSidebarLayout, routeWorkspace } from "./layout";
+import { bindMobileSidebarAccessibility } from "./mobile-accessibility";
 import { bindOpenWorkspace } from "./picker";
 import { renderPluginWorkspaceList } from "./render";
 import { sessionIsLive } from "./render-session-utils";
@@ -61,6 +62,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let draggedItem: DragItem | null = null;
   let resizeCleanup: (() => void) | undefined;
   let sidebarToggleCleanup: (() => void) | undefined;
+  let mobileSidebarAccessibilityCleanup: (() => void) | undefined;
   let sidebarSessionEventsCleanup: (() => void) | undefined;
   let pluginEventsCleanup: (() => void) | undefined;
   let chatStreamingCleanup: (() => void) | undefined;
@@ -113,6 +115,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     restorePersistedSelection();
     restoreSidebarLayout(app);
     resizeCleanup = bindResizer(wrap, app, sidebarBridge);
+    mobileSidebarAccessibilityCleanup?.();
+    mobileSidebarAccessibilityCleanup = bindMobileSidebarAccessibility(app);
     bindOpenWorkspace(wrap, app, context, refreshCurrentWorkspaces);
     bindFallbackDrag(wrap);
     bindWorkspaceActions(wrap, app, context, refreshCurrentWorkspaces, sidebarBridge, renderCurrentWorkspaces);
@@ -138,6 +142,8 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     resizeCleanup = undefined;
     sidebarToggleCleanup?.();
     sidebarToggleCleanup = undefined;
+    mobileSidebarAccessibilityCleanup?.();
+    mobileSidebarAccessibilityCleanup = undefined;
     sidebarSessionEventsCleanup?.();
     sidebarSessionEventsCleanup = undefined;
     pluginEventsCleanup?.();

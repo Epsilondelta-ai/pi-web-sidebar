@@ -636,6 +636,44 @@ describe("pi-web-sidebar plugin", () => {
     expect(workspaceView.style.gridColumn).toBe("2");
   });
 
+  test("marks background content inert while mobile sidebar overlays", () => {
+    const app = setupApp();
+    const body = requireElement(app, ".app-body");
+    const workspaceMain: HTMLElement = document.createElement("main");
+    const existingModal: HTMLElement = document.createElement("section");
+    workspaceMain.setAttribute("aria-hidden", "false");
+    existingModal.setAttribute("aria-hidden", "true");
+    existingModal.setAttribute("inert", "");
+    body.append(workspaceMain, existingModal);
+    window.matchMedia = ((query: string): MediaQueryList => ({
+      addEventListener: (): void => undefined,
+      addListener: (): void => undefined,
+      dispatchEvent: (): boolean => true,
+      matches: query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      removeEventListener: (): void => undefined,
+      removeListener: (): void => undefined,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const pluginSidebar = requireElement<HTMLElement>(body, "[data-pi-web-sidebar-plugin]");
+    expect(pluginSidebar.hasAttribute("inert")).toBe(false);
+    expect(workspaceMain.hasAttribute("inert")).toBe(true);
+    expect(workspaceMain.getAttribute("aria-hidden")).toBe("true");
+    expect(existingModal.hasAttribute("inert")).toBe(true);
+    expect(existingModal.getAttribute("aria-hidden")).toBe("true");
+
+    controller.dispose();
+
+    expect(workspaceMain.hasAttribute("inert")).toBe(false);
+    expect(workspaceMain.getAttribute("aria-hidden")).toBe("false");
+    expect(existingModal.hasAttribute("inert")).toBe(true);
+    expect(existingModal.getAttribute("aria-hidden")).toBe("true");
+  });
+
   test("overrides host grid columns so desktop main content stays right of the sidebar", async () => {
     const app = setupApp();
     const body = requireElement(app, ".app-body");
