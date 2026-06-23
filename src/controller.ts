@@ -34,6 +34,12 @@ type SelectedSidebarSession = {
   workspaceId: string;
 };
 
+type PendingRestoredSelection = {
+  cachedWorkspaceId: string;
+  sessionId: string;
+  workspaceId: string;
+};
+
 type ChatStreamingSessionSnapshot = {
   live?: boolean;
   status?: string;
@@ -72,6 +78,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   let channelSubscriptions: SubscriptionLike[] = [];
   let optimisticSessionsByWorkspace: Record<string, OptimisticSidebarSession[]> = {};
   let pendingSessionNameOverlays: Record<string, string> = {};
+  let pendingRestoredSelection: PendingRestoredSelection = emptyPendingRestoredSelection();
   let workspaceCacheSaveInFlight: boolean = false;
   let publishingActiveSessionId: boolean = false;
   let queuedWorkspaceCacheSave: SidebarWorkspace[] | undefined;
@@ -176,8 +183,17 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function restorePersistedSelection(): void {
-    app.dataset.activeSessionId = app.dataset.activeSessionId || localStorage.getItem(ACTIVE_SESSION_KEY) || "";
-    app.dataset.activeWorkspaceId = app.dataset.activeWorkspaceId || localStorage.getItem(ACTIVE_WORKSPACE_KEY) || "";
+    const existingSessionId: string = app.dataset.activeSessionId || "";
+    const storedSessionId: string = localStorage.getItem(ACTIVE_SESSION_KEY) || "";
+    const storedWorkspaceId: string = localStorage.getItem(ACTIVE_WORKSPACE_KEY) || "";
+    app.dataset.activeSessionId = existingSessionId;
+    pendingRestoredSelection = existingSessionId || !storedSessionId
+      ? emptyPendingRestoredSelection()
+      : { cachedWorkspaceId: "", sessionId: storedSessionId, workspaceId: storedWorkspaceId };
+
+    if (!pendingRestoredSelection.sessionId) {
+      app.dataset.activeWorkspaceId = app.dataset.activeWorkspaceId || storedWorkspaceId;
+    }
   }
 
   function bindSidebarSessionEvents(): void {
@@ -454,6 +470,20 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       return;
     }
 
+    if (!sessionId && pendingRestoredSelection.sessionId && !app.dataset.activeSessionId) {
+      return;
+    }
+
+    if (sessionId && sessionId === pendingRestoredSelection.sessionId) {
+      if (!app.dataset.activeSessionId) {
+        return;
+      }
+
+      clearPendingRestoredSelection();
+    } else if (sessionId) {
+      clearPendingRestoredSelection();
+    }
+
     const previousSessionId: string = app.dataset.activeSessionId || "";
     app.dataset.activeSessionId = sessionId || "";
     reconcileActiveWorkspace();
@@ -483,6 +513,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
   }
 
   function setActiveSidebarSession(workspaceId: string, sessionId: string): void {
+    clearPendingRestoredSelection();
     app.dataset.activeSessionId = sessionId;
     app.dataset.activeWorkspaceId = workspaceId;
     app.sidebarOpenWorkspaceId = workspaceId;
@@ -536,6 +567,7 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       [workspaceId]: [session, ...(optimisticSessionsByWorkspace[workspaceId] || []).filter((item): boolean => item.id !== sessionId)],
     };
     workspaces = upsertWorkspaceSession(workspaces, workspaceId, session);
+    clearPendingRestoredSelection();
     app.dataset.activeSessionId = sessionId;
     app.dataset.activeWorkspaceId = workspaceId;
     app.sidebarOpenWorkspaceId = workspaceId;
@@ -622,6 +654,77 @@ export function createSidebarController(app: AppElement, context: PluginContext 
       app.dataset.activeSessionId = "";
       storePersistedSelection("", app.dataset.activeWorkspaceId || "");
     }
+  }
+
+  function clearPendingRestoredSelection(): void {
+    pendingRestoredSelection = emptyPendingRestoredSelection();
+  }
+
+  function rememberCachedRestoredSessionWorkspace(): void {
+    if (!pendingRestoredSelection.sessionId || pendingRestoredSelection.cachedWorkspaceId) {
+      return;
+    }
+
+    pendingRestoredSelection = {
+      ...pendingRestoredSelection,
+      cachedWorkspaceId: findWorkspaceIdForRestoredSession(workspaces, pendingRestoredSelection),
+    };
+  }
+
+  function routeRestoredPersistedSelection(step: WorkspaceHydrationStep): boolean {
+    const pendingSelection: PendingRestoredSelection = pendingRestoredSelection;
+
+    if (!pendingSelection.sessionId || step !== "actual") {
+      return false;
+    }
+
+    clearPendingRestoredSelection();
+    const workspaceId: string = findWorkspaceIdForRestoredSession(workspaces, pendingSelection);
+
+    if (!workspaceId || restoredSessionOnlyCameFromEmptyDirectCache(workspaceId, pendingSelection)) {
+      storePersistedSelection("", "");
+      return false;
+    }
+
+    app.dataset.activeSessionId = pendingSelection.sessionId;
+    app.dataset.activeWorkspaceId = workspaceId;
+    app.sidebarOpenWorkspaceId = workspaceId;
+    storePersistedSelection(pendingSelection.sessionId, workspaceId);
+    routeWorkspace(app);
+    publishActiveSessionId(pendingSelection.sessionId);
+    sidebarBridge.emitEvent("session.selected", { sessionId: pendingSelection.sessionId, source: "restore", workspaceId });
+    return true;
+  }
+
+  function findWorkspaceIdForRestoredSession(
+    workspacesToSearch: SidebarWorkspace[],
+    pendingSelection: PendingRestoredSelection,
+  ): string {
+    if (pendingSelection.workspaceId) {
+      return workspaceContainsSession(workspacesToSearch, pendingSelection.workspaceId, pendingSelection.sessionId)
+        ? pendingSelection.workspaceId
+        : "";
+    }
+
+    return findWorkspaceIdForSession(workspacesToSearch, pendingSelection.sessionId);
+  }
+
+  function restoredSessionOnlyCameFromEmptyDirectCache(
+    workspaceId: string,
+    pendingSelection: PendingRestoredSelection,
+  ): boolean {
+    if (pendingSelection.cachedWorkspaceId !== workspaceId) {
+      return false;
+    }
+
+    const directWorkspace: SidebarWorkspace | undefined = directWorkspaceList()
+      .find((workspace: SidebarWorkspace): boolean => workspace.id === workspaceId);
+
+    if (!directWorkspace) {
+      return false;
+    }
+
+    return !(directWorkspace.sessions || []).some((session: SidebarSession): boolean => session.id === pendingSelection.sessionId);
   }
 
   function applySessionChange(change: Record<string, unknown>): void {
@@ -812,6 +915,9 @@ export function createSidebarController(app: AppElement, context: PluginContext 
         [chatStreamingSessionId]: snapshotSession(workspaces, refreshedWorkspaces, chatStreamingSessionId),
       };
     }
+    if (step === "local" || step === "file") {
+      rememberCachedRestoredSessionWorkspace();
+    }
     if (step === "file") {
       storeJson(WORKSPACE_CACHE_KEY, { workspaces });
     }
@@ -824,7 +930,12 @@ export function createSidebarController(app: AppElement, context: PluginContext 
     if (replacementSession.sessionId) {
       setActiveSidebarSession(replacementSession.workspaceId, replacementSession.sessionId);
     }
-    reconcileActiveWorkspace();
+    const restoredPersistedSelection: boolean = routeRestoredPersistedSelection(step);
+
+    if (!restoredPersistedSelection) {
+      reconcileActiveWorkspace();
+    }
+
     renderCurrentWorkspaces();
     syncChatStreamingIndicator();
     sidebarBridge.emitEvent("refresh-workspaces", { step, workspaceCount: workspaces.length });
@@ -1275,10 +1386,19 @@ function normalizeSessionName(name: string): string {
   return name.length > 12 ? `${name.slice(0, 12)}...` : name;
 }
 
+function emptyPendingRestoredSelection(): PendingRestoredSelection {
+  return { cachedWorkspaceId: "", sessionId: "", workspaceId: "" };
+}
+
 function findWorkspaceIdForSession(workspaces: SidebarWorkspace[], sessionId: string): string {
   return workspaces.find((workspace: SidebarWorkspace): boolean => {
     return (workspace.sessions || []).some((session: SidebarSession): boolean => session.id === sessionId);
   })?.id || "";
+}
+
+function workspaceContainsSession(workspaces: SidebarWorkspace[], workspaceId: string, sessionId: string): boolean {
+  const workspace: SidebarWorkspace | undefined = workspaces.find((item: SidebarWorkspace): boolean => item.id === workspaceId);
+  return (workspace?.sessions || []).some((session: SidebarSession): boolean => session.id === sessionId);
 }
 
 function firstRemainingWorkspaceSession(workspaces: SidebarWorkspace[], workspaceId: string): SelectedSidebarSession | null {

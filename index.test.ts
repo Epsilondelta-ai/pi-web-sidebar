@@ -1344,6 +1344,269 @@ describe("pi-web-sidebar plugin", () => {
     expect(events.some((event) => event.type === "select-session")).toBe(false);
   });
 
+  test("restores persisted existing session on refresh mount", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "one" }] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "s1");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    const controller = createSidebarController(app, testContext(app));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+
+    controller.mount();
+    expect(localStorage.getItem("plugin.pi-web-sidebar.activeSessionId")).toBe("s1");
+    await controller.refresh();
+
+    const selectedEvent: import("./src/types").SidebarActionEvent | undefined = events.find(
+      (event: import("./src/types").SidebarActionEvent): boolean => event.type === "session.selected",
+    );
+    expect(selectedEvent?.detail).toEqual({ sessionId: "s1", source: "restore", workspaceId: "w1" });
+    expect(app.dataset.activeSessionId).toBe("s1");
+    expect(app.dataset.activeWorkspaceId).toBe("w1");
+    expect(app.sidebarOpenWorkspaceId).toBe("w1");
+    expect(app.dataset.route).toBe("workspace");
+
+    controller.dispose();
+  });
+
+  test("does not restore persisted missing session", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", name: "two" }] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "missing");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    const controller = createSidebarController(app, testContext(app));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+
+    controller.mount();
+    await controller.refresh();
+
+    expect(events.some((event: import("./src/types").SidebarActionEvent): boolean => {
+      return event.type === "session.selected";
+    })).toBe(false);
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(app.sidebarOpenWorkspaceId || "").toBe("");
+
+    controller.dispose();
+  });
+
+  test("does not restore persisted stale cached session before actual refresh", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [
+      { id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "stale" }] },
+    ];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", name: "actual" }] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "s1");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+    const controller = createSidebarController(app, testContext(app, {
+      backend(method: string): Promise<unknown> {
+        if (method === "load-workspace-cache") {
+          return Promise.resolve({ workspaces: cachedWorkspaces });
+        }
+
+        return Promise.resolve({});
+      },
+    }));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    const selected: import("./src/types").SelectedSession[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+    globalThis.piWeb!.behaviorSubject<import("./src/types").SelectedSession | null>(
+      "plugin.pi-web-sidebar.selectedSession",
+      null,
+    ).subscribe((value: import("./src/types").SelectedSession | null): void => {
+      if (value) {
+        selected.push(value);
+      }
+    });
+
+    controller.mount();
+    await controller.refresh();
+
+    expect(events.some((event: import("./src/types").SidebarActionEvent): boolean => {
+      return event.type === "session.selected";
+    })).toBe(false);
+    expect(selected).toEqual([]);
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(app.sidebarOpenWorkspaceId || "").toBe("");
+    expect(app.dataset.route || "").toBe("");
+
+    controller.dispose();
+  });
+
+  test("does not restore persisted cached session into actual empty direct workspace", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [
+      { id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "stale" }] },
+    ];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "s1");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+    const controller = createSidebarController(app, testContext(app, {
+      backend(method: string): Promise<unknown> {
+        if (method === "load-workspace-cache") {
+          return Promise.resolve({ workspaces: cachedWorkspaces });
+        }
+
+        return Promise.resolve({});
+      },
+    }));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+
+    controller.mount();
+    await controller.refresh();
+
+    expect(events.some((event: import("./src/types").SidebarActionEvent): boolean => {
+      return event.type === "session.selected";
+    })).toBe(false);
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(app.sidebarOpenWorkspaceId || "").toBe("");
+
+    controller.dispose();
+  });
+
+  test("does not restore same session id from a different persisted workspace", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [
+      { id: "w1", name: "one", path: "/one", sessions: [] },
+      { id: "w2", name: "two", path: "/two", sessions: [{ id: "s1", name: "duplicate" }] },
+    ];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "s1");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    const controller = createSidebarController(app, testContext(app));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+
+    controller.mount();
+    await controller.refresh();
+
+    expect(events.some((event: import("./src/types").SidebarActionEvent): boolean => {
+      return event.type === "session.selected";
+    })).toBe(false);
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(app.sidebarOpenWorkspaceId || "").toBe("");
+
+    controller.dispose();
+  });
+
+  test("does not publish persisted stale session from active id replay", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [
+      { id: "w1", name: "one", path: "/one", sessions: [{ id: "s1", name: "stale" }] },
+    ];
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "s2", name: "actual" }] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "s1");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+    globalThis.piWeb!.behaviorSubject<string | null>("session.activeId", null).next("s1");
+    const controller = createSidebarController(app, testContext(app, {
+      backend(method: string): Promise<unknown> {
+        if (method === "load-workspace-cache") {
+          return Promise.resolve({ workspaces: cachedWorkspaces });
+        }
+
+        return Promise.resolve({});
+      },
+    }));
+    const selected: import("./src/types").SelectedSession[] = [];
+    globalThis.piWeb!.behaviorSubject<import("./src/types").SelectedSession | null>(
+      "plugin.pi-web-sidebar.selectedSession",
+      null,
+    ).subscribe((value: import("./src/types").SelectedSession | null): void => {
+      if (value) {
+        selected.push(value);
+      }
+    });
+
+    controller.mount();
+    await controller.refresh();
+
+    expect(selected).toEqual([]);
+    expect(app.dataset.activeSessionId).toBe("");
+
+    controller.dispose();
+  });
+
+  test("new session before actual refresh cancels persisted restore", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [{ id: "old", name: "old" }] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "old");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+    app.dispatchEvent(new window.CustomEvent("pi-web-sidebar:session-created", {
+      bubbles: true,
+      detail: { existingSessionIds: ["old"], sessionId: "new", workspaceId: "w1" },
+    }));
+    await controller.refresh();
+
+    expect(app.dataset.activeSessionId).toBe("new");
+    expect(localStorage.getItem("plugin.pi-web-sidebar.activeSessionId")).toBe("new");
+
+    controller.dispose();
+  });
+
+  test("same persisted session click before actual refresh cancels restore event", async () => {
+    const app = setupApp();
+    const cachedWorkspaces: SidebarWorkspace[] = [
+      { id: "w1", name: "one", path: "/one", sessions: [{ id: "old", name: "old" }] },
+    ];
+    app.testWorkspaces = cachedWorkspaces;
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "old");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify({ workspaces: cachedWorkspaces }));
+    const controller = createSidebarController(app, testContext(app));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+
+    controller.mount();
+    requireElement<HTMLElement>(app, "[data-session='old']").click();
+    await controller.refresh();
+
+    expect(events.filter((event: import("./src/types").SidebarActionEvent): boolean => {
+      return event.type === "session.selected" && event.detail?.source === "restore";
+    })).toEqual([]);
+
+    controller.dispose();
+  });
+
+  test("does not mark persisted workspace active before restore validation", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [{ id: "w1", name: "one", path: "/one", sessions: [] }];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "missing");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    expect(app.dataset.activeWorkspaceId || "").toBe("");
+    expect(globalThis.piWebSidebar?.getSnapshot().activeWorkspaceId).toBe("");
+    expect(app.querySelector("[data-workspace='w1'].ws-row.active")).toBeNull();
+
+    controller.dispose();
+  });
+
   test("cross-workspace click publishes selectedSession after snapshot updates", async () => {
     const app = setupApp();
     app.dataset.activeSessionId = "s1";
