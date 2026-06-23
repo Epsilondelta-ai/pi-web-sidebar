@@ -116,8 +116,8 @@ function createSidebarSnapshot(
   const width: number = Number(app.dataset.sidebarWidth || 280);
 
   return {
-    activeSessionId: app.dataset.activeSessionId || readStoredString(ACTIVE_SESSION_KEY),
-    activeWorkspaceId: app.dataset.activeWorkspaceId || readStoredString(ACTIVE_WORKSPACE_KEY),
+    activeSessionId: app.dataset.activeSessionId || "",
+    activeWorkspaceId: app.dataset.activeWorkspaceId || "",
     collapsed: app.dataset.sidebar === "collapsed",
     element,
     openWorkspaceId: app.sidebarOpenWorkspaceId || "",
