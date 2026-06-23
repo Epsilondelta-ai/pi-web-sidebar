@@ -1479,6 +1479,33 @@ describe("pi-web-sidebar plugin", () => {
     controller.dispose();
   });
 
+  test("does not restore same session id from a different persisted workspace", async () => {
+    const app = setupApp();
+    app.testWorkspaces = [
+      { id: "w1", name: "one", path: "/one", sessions: [] },
+      { id: "w2", name: "two", path: "/two", sessions: [{ id: "s1", name: "duplicate" }] },
+    ];
+    localStorage.setItem("plugin.pi-web-sidebar.activeSessionId", "s1");
+    localStorage.setItem("plugin.pi-web-sidebar.activeWorkspaceId", "w1");
+    const controller = createSidebarController(app, testContext(app));
+    const events: import("./src/types").SidebarActionEvent[] = [];
+    globalThis.piWeb!.subject<import("./src/types").SidebarActionEvent>("plugin.pi-web-sidebar.event")
+      .subscribe((event: import("./src/types").SidebarActionEvent): void => {
+        events.push(event);
+      });
+
+    controller.mount();
+    await controller.refresh();
+
+    expect(events.some((event: import("./src/types").SidebarActionEvent): boolean => {
+      return event.type === "session.selected";
+    })).toBe(false);
+    expect(app.dataset.activeSessionId).toBe("");
+    expect(app.sidebarOpenWorkspaceId || "").toBe("");
+
+    controller.dispose();
+  });
+
   test("does not publish persisted stale session from active id replay", async () => {
     const app = setupApp();
     const cachedWorkspaces: SidebarWorkspace[] = [
