@@ -47,6 +47,31 @@ session, and events. When pi-web provides the shared `piWeb` Subject registry, t
 `plugin.pi-web-sidebar.state`, `plugin.pi-web-sidebar.piStatus`, `plugin.pi-web-sidebar.selectedSession`, and
 `plugin.pi-web-sidebar.event`.
 
+Workspace hydration reads the local `WORKSPACE_CACHE_KEY` localStorage value first for immediate sidebar paint, then
+loads the backend `load-workspace-cache` file cache, then reconciles direct workspace state. Cache validation must
+preserve both fallback paths so older or legacy backends can still hydrate the sidebar before direct workspace state
+arrives.
+
+Backend calls use the CLI method name as the transport contract: the browser calls `context.backend(method, { data })`,
+`backend.js` passes the same method as argv[2], and `backend.go` is the canonical method switch. Go backend failures are
+reported on stderr with a non-zero exit; successful unsupported/future methods must not advertise runtime errors as
+implemented behavior. If a future capability/spec table is added, rows with `implemented: false` must be documented as
+planned only, not active UI/runtime failures.
+
+Folder and workspace path inputs are resolved by `cleanPath`: empty/`~` defaults to the user home, `~/...` expands under
+home, any other existing directory is allowed after `filepath.Abs` + `filepath.EvalSymlinks`. Existing workspaces outside
+home are therefore recoverable as long as their real directory still exists; do not introduce a narrower allowed-root
+policy without a migration path for those cached workspaces.
+
+There is no active compatibility adapter layer for backend migration in this repo. Temporary wrappers must name their
+owner, file path, and removal condition in the same change that introduces them. Backend method ownership stays with
+`backend.go` until a dedicated contract module exists; avoid duplicating method/spec/validation lists unless tests assert
+they stay synchronized.
+
+Validation scope includes TypeScript sources, Go backend files, tests, and the generated distributable `index.js`.
+Changes that affect browser behavior must rebuild `index.js`, and test updates must cover both source behavior and the
+bundled entry smoke test.
+
 Build the browser plugin with:
 
 ```sh

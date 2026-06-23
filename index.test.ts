@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Window as HappyWindow } from "happy-dom";
 import { loadWorkspaces } from "./src/api";
-import { WORKSPACE_CACHE_KEY } from "./src/constants";
+import { SIDEBAR_COLLAPSED_KEY, WORKSPACE_CACHE_KEY } from "./src/constants";
 import { createSidebarController } from "./src/index";
 import { PLUGIN_STYLE_TEXT } from "./src/styles";
 import type { AppElement, PluginContext, SidebarWorkspace, SubjectLike, SubscriptionLike } from "./src/types";
@@ -506,7 +506,7 @@ describe("pi-web-sidebar plugin", () => {
 
   test("collapsed restore keeps an expand control visible", () => {
     const app = setupApp();
-    localStorage.setItem("pi.sb.collapsed", "1");
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
     const controller = createSidebarController(app, testContext(app));
 
     controller.mount();
@@ -524,6 +524,31 @@ describe("pi-web-sidebar plugin", () => {
     expect(pluginSidebar.hidden).toBe(false);
     expect(expand.style.display).toBe("inline-flex");
     expect(expand.getAttribute("aria-label")).toBe("collapse sidebar");
+  });
+
+  test("mobile refresh starts with sidebar collapsed without overwriting desktop preference", () => {
+    const app = setupApp();
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "0");
+    window.matchMedia = ((query: string): MediaQueryList => ({
+      addEventListener: (): void => undefined,
+      addListener: (): void => undefined,
+      dispatchEvent: (): boolean => true,
+      matches: query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      removeEventListener: (): void => undefined,
+      removeListener: (): void => undefined,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const pluginSidebar = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-plugin]");
+    const expand = requireElement<HTMLElement>(app, "[data-pi-web-sidebar-toggle]");
+    expect(pluginSidebar.hidden).toBe(true);
+    expect(app.dataset.sidebar).toBe("collapsed");
+    expect(expand.textContent).toBe("›");
+    expect(localStorage.getItem(SIDEBAR_COLLAPSED_KEY)).toBe("0");
   });
 
   test("header sidebar toggle stays visible while open", () => {
@@ -634,6 +659,52 @@ describe("pi-web-sidebar plugin", () => {
     expect(body.style.gridTemplateColumns).toBe("280px 1fr");
     expect(pluginSidebar.style.gridColumn).toBe("1");
     expect(workspaceView.style.gridColumn).toBe("2");
+  });
+
+  test("marks background content inert while mobile sidebar overlays", async () => {
+    const app = setupApp();
+    const body = requireElement(app, ".app-body");
+    const workspaceMain: HTMLElement = document.createElement("main");
+    const existingModal: HTMLElement = document.createElement("section");
+    workspaceMain.setAttribute("aria-hidden", "false");
+    existingModal.setAttribute("aria-hidden", "true");
+    existingModal.setAttribute("inert", "");
+    body.append(workspaceMain, existingModal);
+    window.matchMedia = ((query: string): MediaQueryList => ({
+      addEventListener: (): void => undefined,
+      addListener: (): void => undefined,
+      dispatchEvent: (): boolean => true,
+      matches: query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      removeEventListener: (): void => undefined,
+      removeListener: (): void => undefined,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    const controller = createSidebarController(app, testContext(app));
+
+    controller.mount();
+
+    const pluginSidebar = requireElement<HTMLElement>(body, "[data-pi-web-sidebar-plugin]");
+    const expand = requireElement<HTMLButtonElement>(app, "[data-pi-web-sidebar-toggle]");
+    expect(pluginSidebar.hidden).toBe(true);
+    expect(workspaceMain.hasAttribute("inert")).toBe(false);
+
+    expand.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    expect(pluginSidebar.hidden).toBe(false);
+    expect(pluginSidebar.hasAttribute("inert")).toBe(false);
+    expect(workspaceMain.hasAttribute("inert")).toBe(true);
+    expect(workspaceMain.getAttribute("aria-hidden")).toBe("true");
+    expect(existingModal.hasAttribute("inert")).toBe(true);
+    expect(existingModal.getAttribute("aria-hidden")).toBe("true");
+
+    controller.dispose();
+
+    expect(workspaceMain.hasAttribute("inert")).toBe(false);
+    expect(workspaceMain.getAttribute("aria-hidden")).toBe("false");
+    expect(existingModal.hasAttribute("inert")).toBe(true);
+    expect(existingModal.getAttribute("aria-hidden")).toBe("true");
   });
 
   test("overrides host grid columns so desktop main content stays right of the sidebar", async () => {
