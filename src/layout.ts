@@ -22,7 +22,8 @@ export function restoreSidebarLayout(app: AppElement): void {
   }
 
   try {
-    collapseSidebarLayout(app, localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
+    const collapsed: boolean = isMobileSidebarViewport() || localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    applySidebarCollapsedState(app, collapsed, false);
   } catch {
     applySidebarGrid(app, width);
   }
@@ -37,12 +38,24 @@ export function bindHeaderSidebarToggle(app: AppElement): () => void {
 }
 
 export function collapseSidebarLayout(app: AppElement, collapsed: boolean): void {
+  applySidebarCollapsedState(app, collapsed, true);
+}
+
+function applySidebarCollapsedState(app: AppElement, collapsed: boolean, persist: boolean): void {
   app.dataset.sidebar = collapsed ? "collapsed" : "open";
   app.querySelector(`[${PLUGIN_PANEL_ATTR}]`)?.toggleAttribute("hidden", collapsed);
 
   syncSidebarToggleButton(app);
-  storeString(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+
+  if (persist) {
+    storeString(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  }
+
   applySidebarGrid(app);
+}
+
+function isMobileSidebarViewport(): boolean {
+  return window.matchMedia?.("(max-width: 768px)").matches ?? window.innerWidth <= 768;
 }
 
 function syncSidebarToggleButton(app: AppElement): void {
